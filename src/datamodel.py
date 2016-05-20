@@ -1,6 +1,6 @@
 
 
-class AccessUninitializedVarError(Exception):
+class VarAccessError(Exception):
     pass
 
 
@@ -18,7 +18,7 @@ class CObject(object):
 
     def get_val(self):
         if self.__val is None:
-            raise AccessUninitializedVarError('variable is not inititialized')
+            raise VarAccessError('global variable is not inititialized')
         return self.__val
 
     def set_val(self, new_val):
@@ -42,7 +42,9 @@ class CObject(object):
                             .format(type(value).__name__, cls.__name__))
 
     def __set__(self, instance, value):
-        self.val = value
+        raise VarAccessError(
+            "Cannot change CObjects at runtime (probably you did "
+            "'prog.varname = data' instead of 'prog.varname.val = data')")
 
     def __repr__(self):
         return '{}({!r})'.format(type(self).__name__, self.val)

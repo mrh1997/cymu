@@ -11,9 +11,9 @@ class TestData(object):
         c_obj = self.DummyCObj('content')
         assert c_obj.val == 'content'
 
-    def test_getVal_onUninitializedInt_raisesAccessUninitializedVarError(self):
+    def test_getVal_onUninitializedInt_raisesVarAccessError(self):
         c_obj = self.DummyCObj()
-        with pytest.raises(datamodel.AccessUninitializedVarError):
+        with pytest.raises(datamodel.VarAccessError):
             dummy = c_obj.val
 
     def test_setVal_changesContent(self):
@@ -57,14 +57,12 @@ class TestData(object):
             x = self.DummyCObj('content')
         assert Dummy().x.val == 'content'
 
-    def test_setAsMember_replaceValInsteadOfObj(self):
+    def test_setAsMember_raisesVarAccessError(self):
         class Dummy(object):
             x = self.DummyCObj('initial-content')
         dummy = Dummy()
-        id_of_x_before_assignment = id(dummy.x)
-        dummy.x = 'assigned-content'
-        assert id(dummy.x) == id_of_x_before_assignment
-        assert dummy.x.val == 'assigned-content'
+        with pytest.raises(datamodel.VarAccessError):
+            dummy.x = self.DummyCObj('another-content')
 
     def test_cmp_ok(self):
         c_obj = self.DummyCObj('1')
