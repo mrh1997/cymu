@@ -12,13 +12,21 @@ def config_clang():
     clang.cindex.Config.set_library_path(libclang_dir)
 
 def parse_var_decl(var_decl_cast):
+    init_val_list = list(var_decl_cast.get_children())
+    if len(init_val_list) == 1:
+        int_lit_cast = init_val_list[0]
+        assert int_lit_cast.kind.name == 'INTEGER_LITERAL'
+        int_tok_cast = int_lit_cast.get_tokens().next()
+        args = [ast.Num(n=int(int_tok_cast.spelling))]
+    else:
+        args = []
     return ast.Assign(
         targets=[ast.Name(id=var_decl_cast.spelling, ctx=ast.Store())],
         value=ast.Call(
             func=ast.Attribute(
                 value=ast.Name(id='datamodel', ctx=ast.Load()),
                 attr='CInt', ctx=ast.Load()),
-            args=[],
+            args=args,
             keywords=[],
             starargs=None,
             kwargs=None))
@@ -30,10 +38,23 @@ def parse_func_decl(func_decl_cast):
     for stmt_cast in comp_stmt_cast.get_children():
         assert stmt_cast.kind.name == 'BINARY_OPERATOR'
         assert stmt_cast.operator_kind.name == 'ASSIGN'
-        decl_ref_cast, int_lit_cast = stmt_cast.get_children()
+        decl_ref_cast, val_cast = stmt_cast.get_children()
         assert decl_ref_cast.kind.name == 'DECL_REF_EXPR'
-        assert int_lit_cast.kind.name == 'INTEGER_LITERAL'
-        int_tok_cast = int_lit_cast.get_tokens().next()
+        if val_cast.kind.name == 'INTEGER_LITERAL':
+            int_tok_cast = val_cast.get_tokens().next()
+            val = ast.Num(n=int(int_tok_cast.spelling))
+        elif val_cast.kind.name == 'UNEXPOSED_EXPR':
+            [val_ref_cast] = val_cast.get_children()
+            assert val_ref_cast.kind.name == 'DECL_REF_EXPR'
+            val = ast.Attribute(
+                value=ast.Attribute(
+                    value=ast.Name(id='self', ctx=ast.Load()),
+                    attr=val_ref_cast.spelling,
+                    ctx=ast.Load()),
+                attr='val',
+                ctx=ast.Load())
+        else:
+            raise AssertionError()
         var_pyast = ast.Attribute(
             value=ast.Attribute(
                 value=ast.Name(id='self', ctx=ast.Load()),
@@ -43,7 +64,7 @@ def parse_func_decl(func_decl_cast):
             ctx=ast.Store())
         stmts_pyast.append(ast.Assign(
             targets=[var_pyast],
-            value=ast.Num(n=int(int_tok_cast.spelling))))
+            value=val))
     return ast.FunctionDef(
         name=func_decl_cast.spelling,
         decorator_list=[],
@@ -84,7 +105,6 @@ def parse_transunit(transunit):
 def compile_transunit(transunit):
     module_pyast = parse_transunit(transunit)
     ast.fix_missing_locations(module_pyast)
-    print ast.dump(module_pyast)
     module_pyc = compile(module_pyast, 'transunit_filename.c', 'exec')
     module = dict()
     exec module_pyc in module
