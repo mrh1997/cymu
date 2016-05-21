@@ -1,5 +1,5 @@
 import pytest
-import datamodel
+from cymu import datamodel
 
 
 class TestData(object):

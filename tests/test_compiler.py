@@ -1,14 +1,10 @@
 import pytest
 import clang.cindex
-import compiler
-import datamodel
+from cymu import datamodel, compiler
 
 
 def compile_ccode(c_src):
-    index = clang.cindex.Index.create()
-    transunit = index.parse('test.c', unsaved_files=[('test.c', c_src)])
-    assert len(list(transunit.diagnostics)) == 0
-    compiled_transunit_cls = compiler.compile_transunit(transunit)
+    compiled_transunit_cls = compiler.compile_str(c_src, 'test.c')
     return compiled_transunit_cls()
 
 def test_varDecl_inGlobalScope_addsVarDefToProgramType():
@@ -38,3 +34,15 @@ def test_eval_onGlobalVar_rerievesContentOfGlobalVar():
     prog = compile_ccode('int a = 10, b; void f() { b = a; }')
     prog.f()
     assert prog.b.val == 10
+
+def test_funcDef_addsDebugInfo():
+    prog = compile_ccode('int a, b, c;\n'
+                         'void f() {\n'
+                         '    a=1;\n'
+                         '    b=2;\n'
+                         '    c=3;\n'
+                         '}')
+    assert prog.f.__func__.__code__.co_filename == 'test.c'
+    line_tab = prog.f.__func__.__code__.co_lnotab
+    assert len(line_tab) == 2*3
+    assert all(ord(line_cnt) == 1 for line_cnt in line_tab[1::2])
