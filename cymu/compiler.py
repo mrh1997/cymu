@@ -8,7 +8,7 @@ EMPTY_DICT = dict()
 class CompileError(Exception):
     pass
 
-def with_src_location(at_start=False):
+def with_src_location():
     """
     This decorator for ast-converters adds the source location of the passed
     c-ast to the returned python-ast.
@@ -19,12 +19,8 @@ def with_src_location(at_start=False):
         @functools.wraps(astconv_func)
         def astconv_wrapper(cast):
             pyast = astconv_func(cast)
-            if at_start:
-                pyast.lineno = cast.extent.start.line
-                pyast.col_offset = cast.extent.start.column-1
-            else:
-                pyast.lineno = cast.extent.end.line
-                pyast.col_offset = cast.extent.end.column-1
+            pyast.lineno = cast.location.line
+            pyast.col_offset = cast.location.column-1
             return pyast
         return astconv_wrapper
     return decorator
@@ -148,7 +144,7 @@ def astconv_func_decl(func_decl_astc):
                            defaults=[]),
         body=astconv_stmt_list(comp_stmt_astc))
 
-@with_src_location(at_start=True)
+@with_src_location()
 def astconv_decl(decl_astc):
     if decl_astc.kind.name == 'VAR_DECL':
         return astconv_var_decl(decl_astc)
