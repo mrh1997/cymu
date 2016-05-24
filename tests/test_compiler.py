@@ -21,7 +21,7 @@ def run_ccode(c_src, **vars):
 
 def test_emptyModule_ok():
     prog = compile_ccode('')
-    assert len([nm for nm in dir(prog) if not nm.startswith('__')]) == 0
+    assert len(prog) == 0
 
 def test_varDecl_inGlobalScope_addsVarDefToProgramType():
     prog = compile_ccode('int a;')
@@ -50,6 +50,14 @@ def test_emptyStmt_ok():
 def test_assignmentOp_onGlobalVar_changesGlobalVarInFuncCall():
     prog = run_ccode('outp = 10;', outp=None)
     assert prog.outp.val == 10
+
+def test_eval_onIntConstant_returnsCInt():
+    def convert_with_check(int_cobj):
+        assert isinstance(int_cobj, datamodel.CInt)
+        return int_cobj.val
+    prog = compile_ccode('int outp; void func() { outp = 3; }')
+    prog.outp.convert = convert_with_check
+    prog.func()
 
 def test_assignmentSubOp_ok():
     prog = run_ccode('inoutp -= 3;', inoutp=7)

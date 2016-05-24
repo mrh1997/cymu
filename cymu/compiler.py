@@ -34,16 +34,21 @@ def config_clang():
 def astconv_expr(expr_astc):
     if expr_astc.kind.name == 'INTEGER_LITERAL':
         int_tok_astc = expr_astc.get_tokens().next()
-        return ast.Num(n=int(int_tok_astc.spelling))
+        int_astpy = ast.Num(n=int(int_tok_astc.spelling))
+        return ast.Call(
+            func=ast.Attribute(
+                value=ast.Name(id='datamodel', ctx=ast.Load()),
+                attr='CInt', ctx=ast.Load()),
+            args=[int_astpy],
+            keywords=[],
+            starargs=None,
+            kwargs=None)
     elif expr_astc.kind.name == 'UNEXPOSED_EXPR':
         [val_ref_astc] = expr_astc.get_children()
         assert val_ref_astc.kind.name == 'DECL_REF_EXPR'
         return ast.Attribute(
-            value=ast.Attribute(
-                value=ast.Name(id='self', ctx=ast.Load()),
-                attr=val_ref_astc.spelling,
-                ctx=ast.Load()),
-            attr='val',   ### remove '.val' (use reference to CObject instead). CObjects have to be extended to support all python special methods for this...
+            value=ast.Name(id='self', ctx=ast.Load()),
+            attr=val_ref_astc.spelling,
             ctx=ast.Load())
     else:
         raise AssertionError('Unsupportet Expression {!r}'
@@ -73,11 +78,8 @@ def astconv_stmt(stmt_astc):
         decl_ref_astc, val_astc = children
         assert decl_ref_astc.kind.name == 'DECL_REF_EXPR'
         var_astpy = ast.Attribute(
-            value=ast.Attribute(
-                value=ast.Name(id='self', ctx=ast.Load()),
-                attr=decl_ref_astc.spelling,
-                ctx=ast.Load()),
-            attr='val',
+            value=ast.Name(id='self', ctx=ast.Load()),
+            attr=decl_ref_astc.spelling,
             ctx=ast.Store())
         if stmt_astc.kind.name == 'BINARY_OPERATOR':
             assert stmt_astc.operator_kind.name == 'ASSIGN'
