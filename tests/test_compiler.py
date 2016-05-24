@@ -19,6 +19,10 @@ def run_ccode(c_src, **vars):
     prog.func()
     return prog
 
+def test_emptyModule_ok():
+    prog = compile_ccode('')
+    assert len([nm for nm in dir(prog) if not nm.startswith('__')]) == 0
+
 def test_varDecl_inGlobalScope_addsVarDefToProgramType():
     prog = compile_ccode('int a;')
     assert isinstance(prog.a, datamodel.CInt)
@@ -33,9 +37,12 @@ def test_varDecl_inGlobalScopeWithInitialization_setsInitialValueOfVar():
     prog = compile_ccode('int outp = 10;')
     assert prog.outp.val == 10
 
-def test_funcDef_addsMethodToProgramType():
+def test_funcDecl_addsMethodToProgramType():
     prog = compile_ccode('void func() {}')
     prog.func()
+
+def test_funcDecl_declarationOnly_ignoreDef():
+    compile_ccode('int f();')
 
 def test_emptyStmt_ok():
     run_ccode(';')
@@ -47,8 +54,6 @@ def test_assignmentOp_onGlobalVar_changesGlobalVarInFuncCall():
 def test_assignmentSubOp_ok():
     prog = run_ccode('inoutp -= 3;', inoutp=7)
     assert prog.inoutp == 4
-
-### test non- '+=' compound binary operators (requires new libclang.dll)
 
 ### test assignment as expr (a = b = c)
 
@@ -105,7 +110,7 @@ def test_doWhileStmt_onNeverNonZeroCondition_doEnterLoopBlockOnce(loopcnt):
                      inoutp1=loopcnt, inoutp2=0)
     assert prog.inoutp2.val == -loopcnt
 
-def test_funcDef_addsDebugInfo():
+def test_funcDecl_addsDebugInfo():
     prog = compile_ccode('int a, b, c;\n'
                          'void func() {\n'
                          '    a=1;\n'

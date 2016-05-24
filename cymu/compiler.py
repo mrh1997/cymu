@@ -43,7 +43,7 @@ def astconv_expr(expr_astc):
                 value=ast.Name(id='self', ctx=ast.Load()),
                 attr=val_ref_astc.spelling,
                 ctx=ast.Load()),
-            attr='val',   ### remove '.val' (use reference to CObject instead)
+            attr='val',   ### remove '.val' (use reference to CObject instead). CObjects have to be extended to support all python special methods for this...
             ctx=ast.Load())
     else:
         raise AssertionError('Unsupportet Expression {!r}'
@@ -85,6 +85,7 @@ def astconv_stmt(stmt_astc):
                 targets=[var_astpy],
                 value=astconv_expr(val_astc))
         else:
+            assert stmt_astc.operator_kind.name == 'SUB_ASSIGN'
             return ast.AugAssign(
                 target=var_astpy,
                 op=ast.Sub(),
@@ -133,16 +134,18 @@ def astconv_stmt_list(body_astc):
         return [astconv_stmt(body_astc)]
 
 def astconv_func_decl(func_decl_astc):
-    comp_stmt_astc, = func_decl_astc.get_children()
-    assert comp_stmt_astc.kind.name == 'COMPOUND_STMT' ### omit, but check functions children count instead (to see if it is a decl without body)
-    return ast.FunctionDef(
-        name=func_decl_astc.spelling,
-        decorator_list=[],
-        args=ast.arguments(args=[ast.Name(id='self', ctx=ast.Param())],
-                           vararg=None,
-                           kwarg=None,
-                           defaults=[]),
-        body=astconv_stmt_list(comp_stmt_astc))
+    children = list(func_decl_astc.get_children())
+    if len(children) == 1:
+        return ast.FunctionDef(
+            name=func_decl_astc.spelling,
+            decorator_list=[],
+            args=ast.arguments(args=[ast.Name(id='self', ctx=ast.Param())],
+                               vararg=None,
+                               kwarg=None,
+                               defaults=[]),
+            body=astconv_stmt_list(children[0]))
+    else:
+        return ast.Pass()
 
 @with_src_location()
 def astconv_decl(decl_astc):
@@ -161,9 +164,8 @@ def astconv_transunit(transunit):
     """
     members_astpy = [astconv_decl(decl_astc)
                      for decl_astc in transunit.cursor.get_children()]
-    ###classname has to be dereived from transunit's name
     class_def_astpy = ast.ClassDef(
-        name='TransUnitCls',
+        name='CModule',
         decorator_list=[],
         bases=[ast.Attribute(
             value=ast.Name(id='datamodel', ctx=ast.Load()),
@@ -172,8 +174,7 @@ def astconv_transunit(transunit):
     module_astpy = ast.Module(body=[
         ast.ImportFrom(module='cymu',
                        names=[ast.alias(name='datamodel', asname=None)]),
-        class_def_astpy])   ###test empty classes
-    ###transunit has to be derive from transunits name
+        class_def_astpy])
     return module_astpy
 
 def compile_transunit(transunit):
@@ -182,7 +183,7 @@ def compile_transunit(transunit):
     module_pyc = compile(module_astpy, transunit.spelling, 'exec')
     module = dict()
     exec module_pyc in module
-    return module['TransUnitCls']
+    return module['CModule']
 
 def compile_str(c_code, filename='filename.c'):
     index = clang.cindex.Index.create()
