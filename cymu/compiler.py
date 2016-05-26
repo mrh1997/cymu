@@ -47,7 +47,7 @@ def astconv_expr(expr_astc):
         [val_ref_astc] = expr_astc.get_children()
         assert val_ref_astc.kind.name == 'DECL_REF_EXPR'
         return ast.Attribute(
-            value=ast.Name(id='self', ctx=ast.Load()),
+            value=ast.Name(id='__globals__', ctx=ast.Load()),
             attr=val_ref_astc.spelling,
             ctx=ast.Load())
     else:
@@ -78,7 +78,7 @@ def astconv_stmt(stmt_astc):
         decl_ref_astc, val_astc = children
         assert decl_ref_astc.kind.name == 'DECL_REF_EXPR'
         var_astpy = ast.Attribute(
-            value=ast.Name(id='self', ctx=ast.Load()),
+            value=ast.Name(id='__globals__', ctx=ast.Load()),
             attr=decl_ref_astc.spelling,
             ctx=ast.Store())
         if stmt_astc.kind.name == 'BINARY_OPERATOR':
@@ -141,7 +141,7 @@ def astconv_func_decl(func_decl_astc):
         return ast.FunctionDef(
             name=func_decl_astc.spelling,
             decorator_list=[],
-            args=ast.arguments(args=[ast.Name(id='self', ctx=ast.Param())],
+            args=ast.arguments(args=[ast.Name(id='__globals__', ctx=ast.Param())],
                                vararg=None,
                                kwarg=None,
                                defaults=[]),

@@ -48,7 +48,10 @@ class CObject(object):
         instance[self].val = self.convert(value)
 
     def __repr__(self):
-        return '{}({!r})'.format(type(self).__name__, self.val)
+        if self.initialized:
+            return '{}({!r})'.format(type(self).__name__, self.val)
+        else:
+            return '{}()'.format(type(self).__name__)
 
     def __cmp__(self, value):
         return cmp(self.val, self.convert(value))
@@ -71,11 +74,22 @@ class CInt(CObject):
     PYTHON_TYPE = int
 
 
-class CProgram(dict):
+class CProgram(object):
 
     def __init__(self):
         super(CProgram, self).__init__()
+        self.__global_insts__ = dict()
         for attrname in dir(self):
-            attr = getattr(type(self), attrname)
-            if isinstance(attr, CObject):
-                self[attr] = attr.copy()
+            if attrname != '__global_insts__':
+                attr = getattr(type(self), attrname)
+                if isinstance(attr, CObject):
+                    self.__global_insts__[attr] = attr.copy()
+
+    def __repr__(self):
+        return "<CProgram>"
+
+    def __getitem__(self, c_obj):
+        return self.__global_insts__[c_obj]
+
+    def __setitem__(self, c_obj, inst_c_obj):
+        self.__global_insts__[c_obj] = inst_c_obj

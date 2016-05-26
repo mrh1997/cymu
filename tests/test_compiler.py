@@ -21,7 +21,7 @@ def run_ccode(c_src, **vars):
 
 def test_emptyModule_ok():
     prog = compile_ccode('')
-    assert len(prog) == 0
+    assert len([nm for nm in dir(prog) if not nm.startswith('__')]) == 0
 
 def test_varDecl_inGlobalScope_addsVarDefToProgramType():
     prog = compile_ccode('int a;')
