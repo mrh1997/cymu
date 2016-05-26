@@ -1,5 +1,3 @@
-
-
 class VarAccessError(Exception):
     pass
 
@@ -12,16 +10,29 @@ class CObject(object):
     PYTHON_TYPE = None
 
     def __init__(self, init_val=None):
-        self.val = init_val
+        self.__val = None
+        if init_val is not None:
+            self.__val = self.convert(init_val)
 
     @property
     def initialized(self):
         return self.val is not None
 
+    def get_val(self):
+        return self.__val
+
+    def set_val(self, new_value):
+        if not isinstance(new_value, self.PYTHON_TYPE):
+            raise TypeError('expected value of type {!r}'
+                            .format(self.PYTHON_TYPE))
+        self.__val = new_value
+
+    val = property(get_val, set_val)
+
     @property
     def checked_val(self):
         if self.initialized:
-            return self.val
+            return self.__val
         else:
             raise VarAccessError('variable is not inititialized')
 
@@ -53,6 +64,11 @@ class CObject(object):
         else:
             return '{}()'.format(type(self).__name__)
 
+
+class CInt(CObject):
+
+    PYTHON_TYPE = int
+
     def __cmp__(self, value):
         return cmp(self.val, self.convert(value))
 
@@ -68,10 +84,6 @@ class CObject(object):
 
     def __rsub__(self, other):
         return self.__class__(self.convert(other) - self.val)
-
-
-class CInt(CObject):
-    PYTHON_TYPE = int
 
 
 class CProgram(object):

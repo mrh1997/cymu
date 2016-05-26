@@ -1,12 +1,16 @@
-
-int a, b, c;
+int a, b = 10, c;
 
 void demo_func()
 {
-	a = 0;
+	a = 3;
 	if (a)
-		b = 2;
+	{
+		while (a)
+		{
+			b -= 1;
+			a -= 1;
+		}
+	}
 	else
-		b = 3;
-	c = 3;
+		c = 3;
 }

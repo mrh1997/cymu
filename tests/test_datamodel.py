@@ -4,6 +4,27 @@ from cymu import datamodel
 
 class TestCObject(object):
 
+    def test_init_withPyObj_ok(self):
+        c_obj = datamodel.CInt(11)
+        assert isinstance(c_obj.val, int)
+        assert c_obj.val == 11
+
+    def test_init_withCObj_ok(self):
+        c_obj = datamodel.CInt(datamodel.CInt(11))
+        assert isinstance(c_obj.val, int)
+        assert c_obj.val == 11
+
+    def test_setVal_withPyObj_ok(self):
+        c_obj = datamodel.CInt()
+        c_obj.val = 11
+        assert isinstance(c_obj.val, int)
+        assert c_obj.val == 11
+
+    def test_setVal_withCObj_raisesTypeError(self):
+        c_obj = datamodel.CInt()
+        with pytest.raises(TypeError):
+            c_obj.val = datamodel.CInt(11)
+
     def test_initialized_onInitializedCObj_returnsTrue(self):
         assert datamodel.CInt(11).initialized
 
@@ -79,6 +100,9 @@ class TestCObject(object):
         container.c_obj = c_obj_val_new
         assert container[c_obj_def] is c_obj_val_old
         assert container[c_obj_def].val == 99
+
+
+class TestCInt(object):
 
     def test_cmp_withPyObj_ok(self):
         c_obj = datamodel.CInt(1)
