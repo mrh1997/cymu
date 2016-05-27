@@ -23,6 +23,13 @@ def test_emptyModule_ok():
     prog = compile_ccode('')
     assert len([nm for nm in dir(prog) if not nm.startswith('__')]) == 0
 
+def test_funcDecl_addsMethodToProgramType():
+    prog = compile_ccode('void func() {}')
+    prog.func()
+
+def test_funcDecl_declarationOnly_ignoreDef():
+    compile_ccode('int f();')
+
 def test_varDecl_inGlobalScope_addsVarDefToProgramType():
     prog = compile_ccode('int a;')
     assert isinstance(prog.a, datamodel.CInt)
@@ -33,16 +40,22 @@ def test_varDecl_inGlobalScopeMultipleVars_addsVarDefsToProgramType():
     assert isinstance(prog.b, datamodel.CInt)
     assert isinstance(prog.c, datamodel.CInt)
 
+def test_varDecl_inLocalScope_doesCorrectAssignment():
+    prog = run_ccode('int a; a = 11; outp = a;', outp=None)
+    assert prog.outp.val == 11
+
+def test_varDecl_inLocalScope_doesNotAddVarToProgramTypeOrGlobalScope():
+    prog = run_ccode('int a; a = 11;')
+    assert not hasattr(prog, 'a')
+    assert 'a' not in globals()
+
+### inner scope overwrites variable of same name of outer scope
+
+### local assignment shall not replace CObject but only contained pyobj
+
 def test_varDecl_inGlobalScopeWithInitialization_setsInitialValueOfVar():
     prog = compile_ccode('int outp = 10;')
     assert prog.outp.val == 10
-
-def test_funcDecl_addsMethodToProgramType():
-    prog = compile_ccode('void func() {}')
-    prog.func()
-
-def test_funcDecl_declarationOnly_ignoreDef():
-    compile_ccode('int f();')
 
 def test_emptyStmt_ok():
     run_ccode(';')
@@ -63,7 +76,7 @@ def test_assignmentSubOp_ok():
     prog = run_ccode('inoutp -= 3;', inoutp=7)
     assert prog.inoutp == 4
 
-### test assignment as expr (a = b = c)
+### test assignment as expr (a = b = c *= d;)
 
 def test_eval_onGlobalVar_rerievesContentOfGlobalVar():
     prog = run_ccode('outp = inp;', inp=10, outp=None)
