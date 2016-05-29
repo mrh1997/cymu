@@ -17,13 +17,12 @@ class TestCObject(object):
     def test_setVal_withPyObj_ok(self):
         c_obj = datamodel.CInt()
         c_obj.val = 11
-        assert isinstance(c_obj.val, int)
         assert c_obj.val == 11
 
-    def test_setVal_withCObj_raisesTypeError(self):
+    def test_setVal_withCObj_ok(self):
         c_obj = datamodel.CInt()
-        with pytest.raises(TypeError):
-            c_obj.val = datamodel.CInt(11)
+        c_obj.val = datamodel.CInt(11)
+        assert c_obj.val == 11
 
     def test_initialized_onInitializedCObj_returnsTrue(self):
         assert datamodel.CInt(11).initialized
@@ -73,33 +72,12 @@ class TestCObject(object):
         with pytest.raises(TypeError):
             datamodel.CInt.convert('invalid-type')
 
-    def test_getDescriptor_returnsAssignedCObjectInContainingDict(self):
-        c_obj_def = datamodel.CInt(11)
-        c_obj_val = datamodel.CInt(22)
-        class Container(dict):
-            c_obj = c_obj_def
-        container = Container({c_obj_def: c_obj_val})
-        assert container.c_obj is c_obj_val
-
-    def test_getDescriptor_onUninstanciatedContaingDict_returnsSelf(self):
-        c_obj_def = datamodel.CInt(11)
-        class Container(dict):
-            c_obj = c_obj_def
-        assert Container.c_obj is c_obj_def
-
-    def test_setDescriptor_replaceValInCObjOfContainingDictWithConvertedVal(self):
-        class DummyConvertCInt(datamodel.CInt):
-            def convert(cls, value):
-                return 99
-        c_obj_def = DummyConvertCInt(11)
-        c_obj_val_old = DummyConvertCInt(22)
-        c_obj_val_new = datamodel.CInt()
-        class Container(dict):
-            c_obj = c_obj_def
-        container = Container({c_obj_def: c_obj_val_old})
-        container.c_obj = c_obj_val_new
-        assert container[c_obj_def] is c_obj_val_old
-        assert container[c_obj_def].val == 99
+    def test_setDescriptor_raisesVarAccessError(self):
+        class Container(object):
+            var = datamodel.CInt()
+        container = Container()
+        with pytest.raises(datamodel.VarAccessError):
+            container.var = 3
 
 
 class TestCInt(object):
@@ -167,6 +145,6 @@ class TestCProgram(object):
         class ProgramWithVar(datamodel.CProgram):
             var = var_def
         prog = ProgramWithVar()
-        assert isinstance(prog[var_def], datamodel.CInt)
-        assert prog[var_def] is not var_def
-        assert prog[var_def].val == 11
+        assert isinstance(prog.var, datamodel.CInt)
+        assert prog.var is not var_def
+        assert prog.var.val == 11

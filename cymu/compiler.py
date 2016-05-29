@@ -46,12 +46,16 @@ def astconv_expr(expr_astc, local_names):
         [val_ref_astc] = expr_astc.get_children()
         assert val_ref_astc.kind.name == 'DECL_REF_EXPR'
         if val_ref_astc.spelling in local_names:
-            return ast.Name(id=val_ref_astc.spelling, ctx=ast.Load())
+            obj_ref_astpy = ast.Name(id=val_ref_astc.spelling, ctx=ast.Load())
         else:
-            return ast.Attribute(
+            obj_ref_astpy = ast.Attribute(
                 value=ast.Name(id='__globals__', ctx=ast.Load()),
                 attr=val_ref_astc.spelling,
                 ctx=ast.Load())
+        return ast.Attribute(
+            value=obj_ref_astpy,
+            attr='val',
+            ctx=ast.Load())
     else:
         raise AssertionError('Unsupportet Expression {!r}'
                              .format(expr_astc.kind.name))
@@ -81,21 +85,22 @@ def astconv_stmt(stmt_astc, local_names):
         decl_ref_astc, val_astc = children
         assert decl_ref_astc.kind.name == 'DECL_REF_EXPR'
         if decl_ref_astc.spelling in local_names:
-            var_astpy = ast.Name(id=decl_ref_astc.spelling, ctx=ast.Store())
+            var_astpy = ast.Name(id=decl_ref_astc.spelling, ctx=ast.Load())
         else:
             var_astpy = ast.Attribute(
                 value=ast.Name(id='__globals__', ctx=ast.Load()),
                 attr=decl_ref_astc.spelling,
-                ctx=ast.Store())
+                ctx=ast.Load())
+        val_astpy = ast.Attribute(value=var_astpy, attr='val', ctx=ast.Store())
         if stmt_astc.kind.name == 'BINARY_OPERATOR':
             assert stmt_astc.operator_kind.name == 'ASSIGN'
             return ast.Assign(
-                targets=[var_astpy],
+                targets=[val_astpy],
                 value=astconv_expr(val_astc, local_names))
         else:
             assert stmt_astc.operator_kind.name == 'SUB_ASSIGN'
             return ast.AugAssign(
-                target=var_astpy,
+                target=val_astpy,
                 op=ast.Sub(),
                 value=astconv_expr(val_astc, local_names))
     elif stmt_astc.kind.name == 'IF_STMT':

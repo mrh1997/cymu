@@ -1,3 +1,5 @@
+
+
 class VarAccessError(Exception):
     pass
 
@@ -16,28 +18,27 @@ class CObject(object):
 
     @property
     def initialized(self):
-        return self.val is not None
+        return self.__val is not None
 
     def get_val(self):
+        if self.__val is None:
+            raise VarAccessError('global variable is not inititialized')
         return self.__val
 
     def set_val(self, new_value):
-        if not isinstance(new_value, self.PYTHON_TYPE):
-            raise TypeError('expected value of type {!r}'
-                            .format(self.PYTHON_TYPE))
-        self.__val = new_value
+        self.__val = self.convert(new_value)
 
     val = property(get_val, set_val)
 
     @property
     def checked_val(self):
         if self.initialized:
-            return self.__val
+            return self.val
         else:
             raise VarAccessError('variable is not inititialized')
 
     def copy(self):
-        return type(self)(self.val)
+        return type(self)(self.__val)
 
     @classmethod
     def convert(cls, value):
@@ -49,14 +50,10 @@ class CObject(object):
             raise TypeError("cannot convert from type '{}' to type '{}'"
                             .format(type(value).__name__, cls.__name__))
 
-    def __get__(self, instance, owner):
-        if instance is None:
-            return self
-        else:
-            return instance[self]
-
     def __set__(self, instance, value):
-        instance[self].val = self.convert(value)
+        raise VarAccessError(
+            "Cannot change CObjects at runtime (probably you did "
+            "'prog.varname = data' instead of 'prog.varname.val = data')")
 
     def __repr__(self):
         if self.initialized:
@@ -90,18 +87,10 @@ class CProgram(object):
 
     def __init__(self):
         super(CProgram, self).__init__()
-        self.__global_insts__ = dict()
         for attrname in dir(self):
-            if attrname != '__global_insts__':
-                attr = getattr(type(self), attrname)
-                if isinstance(attr, CObject):
-                    self.__global_insts__[attr] = attr.copy()
+            attr = getattr(type(self), attrname)
+            if isinstance(attr, CObject):
+                self.__dict__[attrname] = attr.copy()
 
     def __repr__(self):
         return "<CProgram>"
-
-    def __getitem__(self, c_obj):
-        return self.__global_insts__[c_obj]
-
-    def __setitem__(self, c_obj, inst_c_obj):
-        self.__global_insts__[c_obj] = inst_c_obj
