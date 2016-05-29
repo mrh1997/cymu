@@ -76,7 +76,16 @@ def test_assignmentSubOp_ok():
     prog = run_ccode('inoutp -= 3;', inoutp=7)
     assert prog.inoutp == 4
 
-### test assignment as expr (a = b = c *= d;)
+def test_assignment_inExpr_ok():
+    prog = run_ccode('outp2 = outp1 = inoutp0 -= 1;',
+                     inoutp0=3, outp1=None, outp2=None)
+    assert prog.inoutp0 == 2
+    assert prog.outp1 == 2
+    assert prog.outp2 == 2
+
+def test_assignment_inGlobalVarDecl_raisesCompilerError():
+    with pytest.raises(compiler.CompileError):
+        compile_ccode('int a = 1; int b = (a += 1);')
 
 def test_eval_onGlobalVar_rerievesContentOfGlobalVar():
     prog = run_ccode('outp = inp;', inp=10, outp=None)
@@ -125,20 +134,33 @@ def test_whileStmt_ok(loopcnt):
                      inoutp1=loopcnt, inoutp2=0)
     assert prog.inoutp2.val == -loopcnt
 
+def test_whileStmt_withPrefixStmt_executesPrefixStmtBeforeEveryLoop():
+    prog = run_ccode('while (inp -= 1) ;', inp=3)
+
 @pytest.mark.parametrize('loopcnt', (1, 2, 3))
 def test_doWhileStmt_onNeverNonZeroCondition_doEnterLoopBlockOnce(loopcnt):
     prog = run_ccode('do { inoutp1 -= 1; inoutp2 -= 1; } while (inoutp1);',
                      inoutp1=loopcnt, inoutp2=0)
     assert prog.inoutp2.val == -loopcnt
 
+def test_doWhileStmt_withPrefixStmt_executesPrefixStmtBeforeEveryLoop():
+    prog = run_ccode('do ; while (inp -= 1);', inp=3)
+
 def test_funcDecl_addsDebugInfo():
     prog = compile_ccode('int a, b, c;\n'
                          'void func() {\n'
-                         '    a=1;\n'
-                         '    b=2;\n'
-                         '    c=3;\n'
+                         '    \n'
+                         '    \n'
+                         '    a = 1;\n'
+                         '    b -= 2;\n'
+                         '    \n'
+                         '    if (a) c = 3;\n'
+                         '    if (a)\n'
+                         '        c = 4;\n'
                          '}')
     assert prog.func.__func__.__code__.co_filename == 'test.c'
-    line_tab = prog.func.__func__.__code__.co_lnotab
-    assert len(line_tab) == 2*3
-    assert all(ord(line_cnt) == 1 for line_cnt in line_tab[1::2])
+    assert prog.func,__func__.__code__.co_lineno == 5
+    line_cnts = [ord(line_cnt)
+                 for line_cnt in prog.func.__func__.__code__.co_lnotab[1::2]
+                 if line_cnt != '\0']
+    assert line_cnts == [3, 1, 2, 1, 1]
