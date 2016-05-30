@@ -38,7 +38,7 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
     if expr_astc.kind.name in ('BINARY_OPERATOR', 'COMPOUND_ASSIGNMENT_OPERATOR'):
         decl_ref_astc, val_astc = children
         assert decl_ref_astc.kind.name == 'DECL_REF_EXPR'
-        if decl_ref_astc.spelling in local_names:
+        if local_names is not None and decl_ref_astc.spelling in local_names:
             var_astpy = ast.Name(id=decl_ref_astc.spelling, ctx=ast.Load())
         else:
             var_astpy = ast.Attribute(
@@ -61,10 +61,17 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
     elif expr_astc.kind.name == 'INTEGER_LITERAL':
         int_tok_astc = expr_astc.get_tokens().next()
         int_astpy = ast.Num(n=int(int_tok_astc.spelling))
+        if local_names is None:  # global variable definition?
+            type_container = ast.Attribute(
+                value=ast.Name(id='datamodel', ctx=ast.Load()),
+                attr='CProgram', ctx=ast.Load())
+        else:
+            type_container = ast.Name(id='__globals__', ctx=ast.Load())
         return ast.Call(
             func=ast.Attribute(
-                value=ast.Name(id='datamodel', ctx=ast.Load()),
-                attr='CInt', ctx=ast.Load()),
+                value=type_container,
+                attr='int',
+                ctx=ast.Load()),
             args=[int_astpy],
             keywords=[],
             starargs=None,
@@ -72,7 +79,7 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
     elif expr_astc.kind.name == 'UNEXPOSED_EXPR':
         [val_ref_astc] = children
         assert val_ref_astc.kind.name == 'DECL_REF_EXPR'
-        if val_ref_astc.spelling in local_names:
+        if local_names is not None and val_ref_astc.spelling in local_names:
             obj_ref_astpy = ast.Name(id=val_ref_astc.spelling, ctx=ast.Load())
         else:
             obj_ref_astpy = ast.Attribute(
@@ -94,13 +101,20 @@ def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
         args = [astconv_expr(init_val_list[0], local_names, prefix_stmts)]
     else:
         args = []
-    local_names.add(var_decl_astc.spelling)
+    if local_names is None:   # global variable definition?
+        type_container = ast.Attribute(
+            value=ast.Name(id='datamodel', ctx=ast.Load()),
+            attr='CProgram', ctx=ast.Load())
+    else:
+        local_names.add(var_decl_astc.spelling)
+        type_container = ast.Name(id='__globals__', ctx=ast.Load())
     return ast.Assign(
         targets=[ast.Name(id=var_decl_astc.spelling, ctx=ast.Store())],
         value=ast.Call(
             func=ast.Attribute(
-                value=ast.Name(id='datamodel', ctx=ast.Load()),
-                attr='CInt', ctx=ast.Load()),
+                value=type_container,
+                attr='int',
+                ctx=ast.Load()),
             args=args,
             keywords=[],
             starargs=None,
@@ -219,9 +233,8 @@ def astconv_transunit(transunit):
         tranlated to program object
     :return: datamodel.Program prog
     """
-    global_names = set()
     prefix_stmts = []
-    members_astpy = [astconv_decl(decl_astc, global_names, prefix_stmts)
+    members_astpy = [astconv_decl(decl_astc, None, prefix_stmts)
                      for decl_astc in transunit.cursor.get_children()]
     assert len(prefix_stmts) == 0
 

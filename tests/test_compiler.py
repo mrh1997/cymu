@@ -21,7 +21,6 @@ def run_ccode(c_src, **vars):
 
 def test_emptyModule_ok():
     prog = compile_ccode('')
-    assert len([nm for nm in dir(prog) if not nm.startswith('__')]) == 0
 
 def test_funcDecl_addsMethodToProgramType():
     prog = compile_ccode('void func() {}')

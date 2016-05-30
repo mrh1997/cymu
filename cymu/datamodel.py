@@ -1,10 +1,22 @@
 
 
-class VarAccessError(Exception):
+class DataModelError(Exception):
     pass
 
 
-class CObject(object):
+class VarAccessError(DataModelError):
+    pass
+
+
+class InstanceError(DataModelError):
+    pass
+
+
+class AddressSpace(object):
+    pass
+
+
+class CData(object):
     """
     All C objects are instances of this class
     """
@@ -13,8 +25,13 @@ class CObject(object):
 
     def __init__(self, init_val=None):
         self.__val = None
+        self.adr_space = None
         if init_val is not None:
             self.__val = self.convert(init_val)
+
+    @classmethod
+    def bind(cls, adr_space):
+        return BoundCType(cls, adr_space)
 
     @property
     def initialized(self):
@@ -26,6 +43,9 @@ class CObject(object):
         return self.__val
 
     def set_val(self, new_value):
+        if not self.instantiated:
+            raise InstanceError('can only set value if corresponding '
+                                'CData object was instantiated')
         self.__val = self.convert(new_value)
 
     val = property(get_val, set_val)
@@ -37,8 +57,18 @@ class CObject(object):
         else:
             raise VarAccessError('variable is not inititialized')
 
-    def copy(self):
-        return type(self)(self.__val)
+    def create_instance(self, address_space):
+        if self.adr_space is not None:
+            raise InstanceError('Cannot create an instance fromn an already '
+                                'instantiated CData object')
+        else:
+            inst_cobj = type(self)(self.__val)
+            inst_cobj.adr_space = address_space
+            return inst_cobj
+
+    @property
+    def instantiated(self):
+        return self.adr_space is not None
 
     @classmethod
     def convert(cls, value):
@@ -57,12 +87,30 @@ class CObject(object):
 
     def __repr__(self):
         if self.initialized:
-            return '{}({!r})'.format(type(self).__name__, self.val)
+            result = '{}({!r})'.format(type(self).__name__, self.val)
         else:
-            return '{}()'.format(type(self).__name__)
+            result = '{}()'.format(type(self).__name__)
+        if self.instantiated:
+            return '<'+result+' instance>'
+        else:
+            return result
 
 
-class CInt(CObject):
+class BoundCType(object):
+
+    def __init__(self, base_type, adr_space):
+        self.base_type = base_type
+        self.adr_space = adr_space
+
+    def __call__(self, *args, **argv):
+        c_obj = self.base_type(*args, **argv)
+        return c_obj.create_instance(self.adr_space)
+
+    def __repr__(self):
+        return '<bound ' + repr(self.base_type)[1:]
+
+
+class CInt(CData):
 
     PYTHON_TYPE = int
 
@@ -77,20 +125,34 @@ class CInt(CObject):
         return self
 
     def __sub__(self, other):
-        return self.__class__(self.val - self.convert(other))
+        result = self.__class__(self.val - self.convert(other))
+        if self.instantiated:
+            return result.create_instance(self.adr_space)
+        else:
+            return result
 
     def __rsub__(self, other):
-        return self.__class__(self.convert(other) - self.val)
+        result = self.__class__(self.convert(other) - self.val)
+        if self.instantiated:
+            return result.create_instance(self.adr_space)
+        else:
+            return result
 
 
 class CProgram(object):
 
     def __init__(self):
         super(CProgram, self).__init__()
+        adr_space = AddressSpace()
         for attrname in dir(self):
             attr = getattr(type(self), attrname)
-            if isinstance(attr, CObject):
-                self.__dict__[attrname] = attr.copy()
+            if isinstance(attr, type):
+                if issubclass(attr, CData):
+                    self.__dict__[attrname] = attr.bind(adr_space)
+            elif isinstance(attr, CData):
+                self.__dict__[attrname] = attr.create_instance(adr_space)
 
     def __repr__(self):
         return "<CProgram>"
+
+    int = CInt
