@@ -1,4 +1,5 @@
 import pytest
+
 from cymu import datamodel, compiler
 
 
@@ -145,21 +146,52 @@ def test_doWhileStmt_onNeverNonZeroCondition_doEnterLoopBlockOnce(loopcnt):
 def test_doWhileStmt_withPrefixStmt_executesPrefixStmtBeforeEveryLoop():
     prog = run_ccode('do ; while (inp -= 1);', inp=3)
 
-def test_funcDecl_addsDebugInfo():
-    prog = compile_ccode('int a, b, c;\n'
-                         'void func() {\n'
-                         '    \n'
-                         '    \n'
-                         '    a = 1;\n'
-                         '    b -= 2;\n'
-                         '    \n'
-                         '    if (a) c = 3;\n'
-                         '    if (a)\n'
-                         '        c = 4;\n'
-                         '}')
-    assert prog.func.__func__.__code__.co_filename == 'test.c'
-    assert prog.func,__func__.__code__.co_lineno == 5
-    line_cnts = [ord(line_cnt)
-                 for line_cnt in prog.func.__func__.__code__.co_lnotab[1::2]
-                 if line_cnt != '\0']
-    assert line_cnts == [3, 1, 2, 1, 1]
+def get_linenos(func):
+    assert func.__func__.__code__.co_filename == 'test.c'
+    linenos = [func.__func__.__code__.co_firstlineno]
+    for lineno_offset in func.__func__.__code__.co_lnotab[1::2]:
+        if lineno_offset != '\0':
+            linenos.append(linenos[-1] + ord(lineno_offset))
+    return linenos
+
+def test_funcDecl_withOneLiners_hasConsecutiveSourceLineNoReferences():
+    prog = compile_ccode("""  // this is line 1
+        int a, b;
+        void func() {
+            a = 1;
+            b -= 2;
+        }""")
+    assert get_linenos(prog.func) == range(3, 7)
+
+def test_funcDecl_withSpaceLine_skipsSourceLineNoReference():
+    prog = compile_ccode("""  // this is line 1
+        int a, b;
+        void func() {
+
+
+            a = 1;
+
+            b = 2;
+        }""")
+    assert get_linenos(prog.func) == [3, 6, 8, 9]
+
+def test_funcDecl_bracketsFromCompoundStmt_doesNot():
+    prog = compile_ccode("""  // this is line 1
+        int a;
+        void func() {
+            {
+                a = 1;
+            }
+        }""")
+    assert get_linenos(prog.func) == [3, 5, 7]
+
+def test_funcDecl_withWhileStmtWithPrefixStmt_hasNoSourceLineNoReferenceForComparisonCode():
+    prog = compile_ccode("""  // this is line 1
+        int a = 10, b = 0;
+        void func() {
+            while (a -= 1)
+            {
+                b -= 1;
+            }
+        }""")
+    assert get_linenos(prog.func) == [3, 4, 6, 8]

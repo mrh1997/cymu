@@ -1,7 +1,8 @@
-import clang.cindex
-import os
 import ast
 import functools
+import os
+
+import clang.cindex
 
 # this value is vor debugging purposes.
 # It prints the python AST of compiled C-code
@@ -14,7 +15,6 @@ def config_clang():
     prj_dir = os.path.dirname(os.path.dirname(__file__))
     libclang_dir = os.path.join(prj_dir, r'libclang\build\Release\bin')
     clang.cindex.Config.set_library_path(libclang_dir)
-
 
 def with_src_location():
     """
@@ -32,6 +32,11 @@ def with_src_location():
             return pyast
         return astconv_wrapper
     return decorator
+
+def src_location_end_marker(astc):
+    return ast.Pass(
+        lineno=astc.extent.end.line,
+        col_offset=astc.extent.end.column - 1)
 
 def astconv_expr(expr_astc, local_names, prefix_stmts):
     children = list(expr_astc.get_children())
@@ -143,12 +148,17 @@ def astconv_if_stmt(if_stmt_astc, local_names, prefix_stmts):
 def astconv_while_stmt(while_stmt_astc, local_names, prefix_stmts):
     [exit_cond_astc, body_astc] = while_stmt_astc.get_children()
     exit_check_prefix_stmts = []
-    exit_check_astpy = astconv_expr(exit_cond_astc, local_names,
-                                    exit_check_prefix_stmts)
-    astconv_expr(exit_cond_astc, local_names, prefix_stmts)
+    exit_check_astpy = ast.If(
+        test=ast.UnaryOp(
+            op=ast.Not(),
+            operand=astconv_expr(exit_cond_astc, local_names,
+                                 exit_check_prefix_stmts)),
+        body=[ast.Break()],
+        orelse=[])
     return ast.While(
-        test=exit_check_astpy,
-        body=to_stmt_list(body_astc, local_names) + exit_check_prefix_stmts,
+        test=ast.Name(id='True', ctx=ast.Load()),
+        body=exit_check_prefix_stmts + [exit_check_astpy] +
+             to_stmt_list(body_astc, local_names),
         orelse=[])
 
 @with_src_location()
@@ -215,7 +225,8 @@ def astconv_func_decl(func_decl_astc, local_names, prefix_stmts):
                                vararg=None,
                                kwarg=None,
                                defaults=[]),
-            body=to_stmt_list(children[0], local_names=set()))
+            body=to_stmt_list(children[0], local_names=set()) +
+                 [src_location_end_marker(func_decl_astc)])
     else:
         return ast.Pass()
 
