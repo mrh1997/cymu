@@ -36,7 +36,7 @@ class CData(object):
 
     def get_val(self):
         if self.__val is None:
-            raise VarAccessError('global variable is not inititialized')
+            raise VarAccessError('variable is not initialized')
         return self.__val
 
     def set_val(self, new_value):
@@ -169,6 +169,63 @@ class CIntegerBase(CData):
 
     def __rsub__(self, other):
         return type(self)(other) - self
+
+
+class CStruct(CData):
+
+    # has to be a list of tuples of names and ctypes, that are describing the
+    # fields in this structure
+    __FIELDS__ = None
+
+    def __init__(self, *args, **argv):
+        init_vals = dict(zip((nm for nm, ctype in self.__FIELDS__), args))
+        init_vals.update(argv)
+        if len(init_vals) != len(args) + len(argv):
+            raise TypeError('struct got multiple initialization values for '
+                            'single field')
+        if len(init_vals) == 0:
+            super(CStruct, self).__init__()
+        else:
+            super(CStruct, self).__init__(())
+        for attrname, attrtype in self.__FIELDS__:
+            if self.initialized:
+                field_cobj = attrtype(init_vals.get(attrname, 0))
+            else:
+                field_cobj = attrtype()
+            self.__dict__[attrname] = field_cobj
+
+    @classmethod
+    def convert(cls, val):
+        if isinstance(val, CStruct):
+            return { nm: getattr(val, nm) for nm, ctype in cls.__FIELDS__ }
+        elif isinstance(val, (tuple, dict)):
+            return val
+        else:
+            raise TypeError('{!r} cannot be converted to object of class {!r}'
+                            .format(val, cls))
+
+    def create_instance(self, address_space):
+        struct_inst = type(self)()
+        struct_inst.adr_space = address_space
+        if self.adr_space is not None:
+            raise InstanceError('Cannot create an instance fromn an already '
+                                'instantiated CData object')
+        for attrname, attrtype in self.__FIELDS__:
+            field_inst = self.__dict__[attrname].create_instance(address_space)
+            struct_inst.__dict__[attrname] = field_inst
+        return struct_inst
+
+    def __repr__(self):
+        if self.initialized:
+            result = '{}({})'.format(type(self).__name__, ', '.join(
+                nm+'='+repr(getattr(self, nm) if isinstance(getattr(self, nm), CStruct) else getattr(self, nm).val)
+                for nm, ctype in self.__FIELDS__))
+        else:
+            result = '{}()'.format(type(self).__name__)
+        if self.instantiated:
+            return '<'+result+' instance>'
+        else:
+            return result
 
 
 class CProgram(object):

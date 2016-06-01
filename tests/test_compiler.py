@@ -1,7 +1,7 @@
 import pytest
 
 from cymu import compiler
-from cymu.datamodel import CProgram
+from cymu.datamodel import CProgram, CStruct
 
 
 def compile_ccode(c_src):
@@ -206,3 +206,63 @@ def test_funcDecl_withWhileStmtWithPrefixStmt_hasNoSourceLineNoReferenceForCompa
             }
         }""")
     assert get_linenos(prog.func) == [3, 4, 6, 8]
+
+def test_structDef_returnCStruct():
+    prog = compile_ccode('struct s { };')
+    struct_s = prog.struct_s.base_type
+    assert issubclass(struct_s, CStruct)
+    assert struct_s.__name__ == 'struct_s'
+
+def test_structDef_withFields_setsFieldDefInPyClass():
+    prog = compile_ccode("""
+        struct s {
+            int a;
+            char b;
+        } ;
+    """)
+    struct_s = prog.struct_s.base_type
+    assert struct_s.__FIELDS__ == [('a', CProgram.int), ('b', CProgram.char)]
+
+def test_structDef_withVarDecl_addsVarDeclToGlobal():
+    prog = compile_ccode("""
+        struct s {
+            int a;
+        } s;
+    """)
+    assert isinstance(prog.s.a, CProgram.int)
+
+def test_structAttr_inAssignmentDest_changesField():
+    prog = compile_ccode("""
+        struct s {
+            int a;
+        } s;
+        void func() {
+            s.a = 10;
+        }
+    """)
+    prog.func()
+    assert prog.s.a == 10
+
+def test_structAttr_inAssignmentSrc_readsField():
+    prog = compile_ccode("""
+        struct s {
+            int a;
+        } s;
+        int outp;
+        void func() {
+            s.a = 10;
+            outp = s.a;
+        }
+    """)
+    prog.func()
+    assert prog.outp == 10
+
+### test support of nested structs
+
+### test source line map of struct definition (var defs in different lines!!!)
+
+### test support for struct initialization
+
+### test support for nested struct initialization
+
+### test compare with "assert short(-1) > long(100)"

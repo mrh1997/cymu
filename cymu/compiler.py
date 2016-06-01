@@ -8,6 +8,8 @@ import clang.cindex
 # It prints the python AST of compiled C-code
 PRINT_PYAST = False
 
+### replace ast.Attribute by convinience function
+
 TYPE_MAP = {
     clang.cindex.TypeKind.CHAR_S: 'char',
     clang.cindex.TypeKind.UCHAR: 'unsigned_char',
@@ -53,27 +55,22 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
     children = list(expr_astc.get_children())
     if expr_astc.kind.name in ('BINARY_OPERATOR', 'COMPOUND_ASSIGNMENT_OPERATOR'):
         decl_ref_astc, val_astc = children
-        assert decl_ref_astc.kind.name == 'DECL_REF_EXPR'
-        if local_names is not None and decl_ref_astc.spelling in local_names:
-            var_astpy = ast.Name(id=decl_ref_astc.spelling, ctx=ast.Load())
-        else:
-            var_astpy = ast.Attribute(
-                value=ast.Name(id='__globals__', ctx=ast.Load()),
-                attr=decl_ref_astc.spelling,
-                ctx=ast.Load())
-        val_astpy = ast.Attribute(value=var_astpy, attr='val', ctx=ast.Store())
+        lvalue_astpy = astconv_expr(decl_ref_astc, local_names, prefix_stmts)
+        lval_val_astpy = ast.Attribute(
+            value=lvalue_astpy, attr='val',
+            ctx=ast.Store())
         if expr_astc.kind.name == 'BINARY_OPERATOR':
             assert expr_astc.operator_kind.name == 'ASSIGN'
             prefix_stmts.append(ast.Assign(
-                targets=[val_astpy],
+                targets=[lval_val_astpy],
                 value=astconv_expr(val_astc, local_names, prefix_stmts)))
         else:
             assert expr_astc.operator_kind.name == 'SUB_ASSIGN'
             prefix_stmts.append(ast.AugAssign(
-                target=val_astpy,
+                target=lval_val_astpy,
                 op=ast.Sub(),
                 value=astconv_expr(val_astc, local_names, prefix_stmts)))
-        return var_astpy
+        return lvalue_astpy
     elif expr_astc.kind.name == 'INTEGER_LITERAL':
         int_tok_astc = expr_astc.get_tokens().next()
         int_astpy = ast.Num(n=int(int_tok_astc.spelling))
@@ -93,44 +90,53 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
             starargs=None,
             kwargs=None)
     elif expr_astc.kind.name == 'UNEXPOSED_EXPR':
-        [val_ref_astc] = children
-        assert val_ref_astc.kind.name == 'DECL_REF_EXPR'
-        if local_names is not None and val_ref_astc.spelling in local_names:
-            obj_ref_astpy = ast.Name(id=val_ref_astc.spelling, ctx=ast.Load())
+        [sub_astc] = children
+        return astconv_expr(sub_astc, local_names, prefix_stmts)
+    elif expr_astc.kind.name == 'DECL_REF_EXPR':
+        if local_names is not None and expr_astc.spelling in local_names:
+            return ast.Name(id=expr_astc.spelling, ctx=ast.Load())
         else:
-            obj_ref_astpy = ast.Attribute(
+            return ast.Attribute(
                 value=ast.Name(id='__globals__', ctx=ast.Load()),
-                attr=val_ref_astc.spelling,
+                attr=expr_astc.spelling,
                 ctx=ast.Load())
+    elif expr_astc.kind.name == 'MEMBER_REF_EXPR':
         return ast.Attribute(
-            value=obj_ref_astpy,
-            attr='val',
+            value=astconv_expr(children[0], local_names, prefix_stmts),
+            attr=expr_astc.spelling,
             ctx=ast.Load())
     else:
-        raise AssertionError('Unsupportet Expression {!r}'
-                             .format(expr_astc.kind.name))
+        raise CompileError('Unsupportet Expression {!r}'
+                            .format(expr_astc.kind.name))
 
 @with_src_location()
 def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
     init_val_list = list(var_decl_astc.get_children())
-    if len(init_val_list) == 1:
-        args = [astconv_expr(init_val_list[0], local_names, prefix_stmts)]
-    else:
+    if var_decl_astc.type.spelling.startswith('struct '):
         args = []
-    if local_names is None:   # global variable definition?
-        type_container = ast.Attribute(
-            value=ast.Name(id='datamodel', ctx=ast.Load()),
-            attr='CProgram', ctx=ast.Load())
+        type_astpy = ast.Name(id=var_decl_astc.type.spelling.replace(' ', '_'),
+                              ctx=ast.Load())
+        assert len(init_val_list) == 1
     else:
-        local_names.add(var_decl_astc.spelling)
-        type_container = ast.Name(id='__globals__', ctx=ast.Load())
+        if len(init_val_list) == 1:
+            args = [astconv_expr(init_val_list[0], local_names, prefix_stmts)]
+        else:
+            args = []
+        if local_names is None:   # global variable definition?
+            type_container = ast.Attribute(
+                value=ast.Name(id='datamodel', ctx=ast.Load()),
+                attr='CProgram', ctx=ast.Load())
+        else:
+            local_names.add(var_decl_astc.spelling)
+            type_container = ast.Name(id='__globals__', ctx=ast.Load())
+        type_astpy = ast.Attribute(
+            value=type_container,
+            attr=TYPE_MAP[var_decl_astc.type.kind],
+            ctx=ast.Load())
     return ast.Assign(
         targets=[ast.Name(id=var_decl_astc.spelling, ctx=ast.Store())],
         value=ast.Call(
-            func=ast.Attribute(
-                value=type_container,
-                attr=TYPE_MAP[var_decl_astc.type.kind],
-                ctx=ast.Load()),
+            func=type_astpy,
             args=args,
             keywords=[],
             starargs=None,
@@ -241,11 +247,47 @@ def astconv_func_decl(func_decl_astc, local_names, prefix_stmts):
     else:
         return ast.Pass()
 
+@with_src_location()
+def astconv_struct_decl(struct_decl_astc, local_names, prefix_stmts):
+    fields = [
+        ast.Tuple(
+            elts=[
+                ast.Str(s=field_def_astc.spelling),
+                ast.Attribute(
+                    value=ast.Attribute(
+                        value=ast.Name(id='datamodel', ctx=ast.Load()),
+                        attr='CProgram',
+                        ctx=ast.Load()),
+                    attr=TYPE_MAP[field_def_astc.type.kind],
+                    ctx=ast.Load())],
+            ctx=ast.Load())
+        for field_def_astc in struct_decl_astc.get_children()]
+    return ast.ClassDef(
+        name='struct_s',   ### support also structs of different names
+        bases=[
+            ast.Attribute(
+                value=ast.Name(id='datamodel', ctx=ast.Load()),
+                attr='CStruct',
+                ctx=ast.Load())],
+        body=[
+            ast.Assign(
+                targets=[
+                    ast.Name(id='__FIELDS__', ctx=ast.Store())],
+                value=ast.List(
+                    elts=fields,
+                    ctx=ast.Load()))],
+        decorator_list=[])
+
 def astconv_decl(decl_astc, local_names, prefix_stmts):
     if decl_astc.kind.name == 'VAR_DECL':
         return astconv_var_decl(decl_astc, local_names, prefix_stmts)
     elif decl_astc.kind.name == 'FUNCTION_DECL':
         return astconv_func_decl(decl_astc, local_names, prefix_stmts)
+    elif decl_astc.kind.name == 'STRUCT_DECL':
+        return astconv_struct_decl(decl_astc, local_names, prefix_stmts)
+    else:
+        raise CompileError('Unsupportet Declaration {!r}'
+                           .format(decl_astc.kind.name))
 
 def astconv_transunit(transunit):
     """

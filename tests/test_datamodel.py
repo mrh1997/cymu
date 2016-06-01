@@ -1,6 +1,6 @@
 import pytest
 
-from cymu.datamodel import CProgram, CData, AddressSpace, BoundCType, \
+from cymu.datamodel import CProgram, CData, CStruct, AddressSpace, BoundCType, \
     InstanceError, VarAccessError
 
 
@@ -266,6 +266,88 @@ class TestCIntegerBase(object):
         c_obj = ctype(0).create_instance(AddressSpace())
         c_obj -= (max + 1) * 4
         assert c_obj.val == 0
+
+
+class TestCStruct(object):
+
+    @classmethod
+    def setup_class(cls):
+        class SimpleStruct(CStruct):
+            __FIELDS__ = [('a', CProgram.int),
+                          ('b', CProgram.short)]
+        class NestedStruct(CStruct):
+            __FIELDS__ = [('field', CProgram.int),
+                          ('inner_struct', SimpleStruct)]
+        cls.SimpleStruct = SimpleStruct
+        cls.NestedStruct = NestedStruct
+
+    def test_create_createsCObjForEveryField(self):
+        c_obj = self.SimpleStruct()
+        assert isinstance(c_obj.a, CProgram.int)
+        assert isinstance(c_obj.b, CProgram.short)
+
+    def test_create_withoutArgs_createsUninitializedFields(self):
+        c_obj = self.SimpleStruct()
+        assert not c_obj.a.initialized
+        assert not c_obj.initialized
+
+    def test_create_withPositionaArgs_initializesFieldsByPosition(self):
+        c_obj = self.SimpleStruct(1, 2)
+        assert c_obj.a.val == 1
+        assert c_obj.b.val == 2
+        assert c_obj.initialized
+
+    def test_create_withKeywordArgs_initializesFieldsByPosition(self):
+        c_obj = self.SimpleStruct(b=1, a=2)
+        assert c_obj.a.val == 2
+        assert c_obj.b.val == 1
+        assert c_obj.initialized
+
+    def test_create_withPartialProvidedArgsOnly_initializesMissingFieldsWith0(self):
+        c_obj = self.SimpleStruct(1)
+        assert c_obj.b.val == 0
+        assert c_obj.initialized
+
+    def test_create_onNestedStruct_recursiveCreatesInnerStruct(self):
+        c_obj = self.NestedStruct()
+        assert isinstance(c_obj.inner_struct, self.SimpleStruct)
+
+    def test_create_onNestedStructWithPartialProvidedArgs_clearsInnerStructs(self):
+        c_obj = self.NestedStruct(1)
+        assert c_obj.inner_struct.a == 0
+        assert c_obj.inner_struct.b == 0
+
+    @pytest.mark.xfail
+    def test_create_onNestedStructWithProvidedInnerStructsAsCObj(self):
+        c_obj = self.NestedStruct(1, self.SimpleStruct(2, 3))
+        assert c_obj.field == 1
+        assert c_obj.inner_struct.a == 2
+        assert c_obj.inner_struct.b == 3
+
+    def test_createInstance_createsInstanceOfFieldsRecursivly(self, adr_space):
+        c_obj = self.NestedStruct()
+        c_obj_inst = c_obj.create_instance(adr_space)
+        assert c_obj_inst.field.instantiated
+        assert c_obj_inst.inner_struct.a.instantiated
+        assert c_obj_inst.inner_struct.b.instantiated
+
+    def test_createInstance_copiesInitVals(self, adr_space):
+        c_obj = self.SimpleStruct(2)
+        c_obj_inst = c_obj.create_instance(adr_space)
+        assert c_obj_inst.a == 2
+
+    def test_instiantiated_onInstantiatedStruct_returnTrue(self, adr_space):
+        c_obj_inst = self.SimpleStruct().create_instance(adr_space)
+        assert c_obj_inst.instantiated
+
+    def test_repr_onUninitialized_returnsEmptyBrackets(self):
+        assert repr(self.SimpleStruct()) == 'SimpleStruct()'
+
+    @pytest.mark.xfail
+    def test_repr_onInitialized_returnsDataAsOrderedKeywordInitializers(self):
+        c_obj = self.NestedStruct(3, self.SimpleStruct(b=10))
+        assert repr(c_obj) == \
+               'NestedStruct(field=3, inner_struct=SimpleStruct(a=0, b=10))'
 
 
 class TestCProgram(object):
