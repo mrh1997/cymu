@@ -8,6 +8,17 @@ import clang.cindex
 # It prints the python AST of compiled C-code
 PRINT_PYAST = False
 
+TYPE_MAP = {
+    clang.cindex.TypeKind.CHAR_S: 'char',
+    clang.cindex.TypeKind.UCHAR: 'unsigned_char',
+    clang.cindex.TypeKind.SHORT: 'short',
+    clang.cindex.TypeKind.USHORT: 'unsigned_short',
+    clang.cindex.TypeKind.INT: 'int',
+    clang.cindex.TypeKind.UINT: 'unsigned_int',
+    clang.cindex.TypeKind.LONG: 'long',
+    clang.cindex.TypeKind.ULONG: 'unsigned_long' }
+
+
 class CompileError(Exception):
     pass
 
@@ -118,7 +129,7 @@ def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
         value=ast.Call(
             func=ast.Attribute(
                 value=type_container,
-                attr='int',
+                attr=TYPE_MAP[var_decl_astc.type.kind],
                 ctx=ast.Load()),
             args=args,
             keywords=[],

@@ -1,6 +1,7 @@
 import pytest
 
-from cymu import datamodel, compiler
+from cymu import compiler
+from cymu.datamodel import CProgram
 
 
 def compile_ccode(c_src):
@@ -32,13 +33,23 @@ def test_funcDecl_declarationOnly_ignoreDef():
 
 def test_varDecl_inGlobalScope_addsVarDefToProgramType():
     prog = compile_ccode('int a;')
-    assert isinstance(prog.a, datamodel.CInt)
+    _ = prog.a
+
+@pytest.mark.parametrize(('name', 'ctype'), [
+    ('char', CProgram.char),
+    ('short', CProgram.short),
+    ('int', CProgram.int),
+    ('unsigned int', CProgram.unsigned_int),
+    ('signed int', CProgram.signed_int)])
+def test_varDecl_ofTypeX_createsTypesXCObj(name, ctype):
+    prog = compile_ccode(name + ' a;')
+    assert isinstance(prog.a, ctype)
 
 def test_varDecl_inGlobalScopeMultipleVars_addsVarDefsToProgramType():
     prog = compile_ccode('int a; int b, c;')
-    assert isinstance(prog.a, datamodel.CInt)
-    assert isinstance(prog.b, datamodel.CInt)
-    assert isinstance(prog.c, datamodel.CInt)
+    assert isinstance(prog.a, CProgram.int)
+    assert isinstance(prog.b, CProgram.int)
+    assert isinstance(prog.c, CProgram.int)
 
 def test_varDecl_inLocalScope_doesCorrectAssignment():
     prog = run_ccode('int a; a = 11; outp = a;', outp=None)
@@ -66,7 +77,7 @@ def test_assignmentOp_onGlobalVar_changesGlobalVarInFuncCall():
 
 def test_eval_onIntConstant_returnsCInt():
     def convert_with_check(int_cobj):
-        assert isinstance(int_cobj, datamodel.CInt)
+        assert isinstance(int_cobj, CProgram.int)
         return int_cobj.val
     prog = compile_ccode('int outp; void func() { outp = 3; }')
     prog.outp.convert = convert_with_check
