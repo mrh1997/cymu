@@ -51,13 +51,28 @@ def src_location_end_marker(astc):
         lineno=astc.extent.end.line,
         col_offset=astc.extent.end.column - 1)
 
+def attr(obj, *nested_attrnames):
+    if isinstance(obj, str):
+        expr_astpy = ast.Name(id=obj, ctx=ast.Load())
+    elif isinstance(obj, ast.AST):
+        expr_astpy = obj
+    else:
+        raise AssertionError('invalid type of "obj"')
+    for attrname in nested_attrnames:
+        expr_astpy = ast.Attribute(
+            value=expr_astpy,
+            attr=attrname,
+            ctx=ast.Load())
+    return expr_astpy
+
 def astconv_expr(expr_astc, local_names, prefix_stmts):
     children = list(expr_astc.get_children())
     if expr_astc.kind.name in ('BINARY_OPERATOR', 'COMPOUND_ASSIGNMENT_OPERATOR'):
         decl_ref_astc, val_astc = children
         lvalue_astpy = astconv_expr(decl_ref_astc, local_names, prefix_stmts)
         lval_val_astpy = ast.Attribute(
-            value=lvalue_astpy, attr='val',
+            value=lvalue_astpy,
+            attr='val',
             ctx=ast.Store())
         if expr_astc.kind.name == 'BINARY_OPERATOR':
             assert expr_astc.operator_kind.name == 'ASSIGN'
@@ -75,16 +90,11 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
         int_tok_astc = expr_astc.get_tokens().next()
         int_astpy = ast.Num(n=int(int_tok_astc.spelling))
         if local_names is None:  # global variable definition?
-            type_container = ast.Attribute(
-                value=ast.Name(id='datamodel', ctx=ast.Load()),
-                attr='CProgram', ctx=ast.Load())
+            type_container = attr('datamodel', 'CProgram')
         else:
             type_container = ast.Name(id='__globals__', ctx=ast.Load())
         return ast.Call(
-            func=ast.Attribute(
-                value=type_container,
-                attr='int',
-                ctx=ast.Load()),
+            func=attr(type_container, 'int'),
             args=[int_astpy],
             keywords=[],
             starargs=None,
@@ -96,15 +106,10 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
         if local_names is not None and expr_astc.spelling in local_names:
             return ast.Name(id=expr_astc.spelling, ctx=ast.Load())
         else:
-            return ast.Attribute(
-                value=ast.Name(id='__globals__', ctx=ast.Load()),
-                attr=expr_astc.spelling,
-                ctx=ast.Load())
+            return attr('__globals__', expr_astc.spelling)
     elif expr_astc.kind.name == 'MEMBER_REF_EXPR':
-        return ast.Attribute(
-            value=astconv_expr(children[0], local_names, prefix_stmts),
-            attr=expr_astc.spelling,
-            ctx=ast.Load())
+        struct_astpy = astconv_expr(children[0], local_names, prefix_stmts)
+        return attr(struct_astpy, expr_astc.spelling)
     else:
         raise CompileError('Unsupportet Expression {!r}'
                             .format(expr_astc.kind.name))
@@ -123,16 +128,11 @@ def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
         else:
             args = []
         if local_names is None:   # global variable definition?
-            type_container = ast.Attribute(
-                value=ast.Name(id='datamodel', ctx=ast.Load()),
-                attr='CProgram', ctx=ast.Load())
+            type_container = attr('datamodel', 'CProgram')
         else:
             local_names.add(var_decl_astc.spelling)
             type_container = ast.Name(id='__globals__', ctx=ast.Load())
-        type_astpy = ast.Attribute(
-            value=type_container,
-            attr=TYPE_MAP[var_decl_astc.type.kind],
-            ctx=ast.Load())
+        type_astpy = attr(type_container, TYPE_MAP[var_decl_astc.type.kind])
     return ast.Assign(
         targets=[ast.Name(id=var_decl_astc.spelling, ctx=ast.Store())],
         value=ast.Call(
@@ -145,8 +145,8 @@ def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
 def astconv_compound_stmt(comp_stmt_astc, local_names, prefix_stmts):
     for stmt_astc in comp_stmt_astc.get_children():
         if stmt_astc.kind.name == 'DECL_STMT':
-            [child] = stmt_astc.get_children()
-            stmt_astpy = astconv_var_decl(child, local_names, prefix_stmts)
+            [child_astc] = stmt_astc.get_children()
+            stmt_astpy = astconv_var_decl(child_astc, local_names, prefix_stmts)
         else:
             stmt_astpy = astconv_stmt(stmt_astc, local_names, prefix_stmts)
         prefix_stmts.append(stmt_astpy)
@@ -252,23 +252,13 @@ def astconv_struct_decl(struct_decl_astc, local_names, prefix_stmts):
     fields = [
         ast.Tuple(
             elts=[
-                ast.Str(s=field_def_astc.spelling),
-                ast.Attribute(
-                    value=ast.Attribute(
-                        value=ast.Name(id='datamodel', ctx=ast.Load()),
-                        attr='CProgram',
-                        ctx=ast.Load()),
-                    attr=TYPE_MAP[field_def_astc.type.kind],
-                    ctx=ast.Load())],
+                ast.Str(s=fld_def_astc.spelling),
+                attr('datamodel', 'CProgram',TYPE_MAP[fld_def_astc.type.kind])],
             ctx=ast.Load())
-        for field_def_astc in struct_decl_astc.get_children()]
+        for fld_def_astc in struct_decl_astc.get_children()]
     return ast.ClassDef(
         name='struct_s',   ### support also structs of different names
-        bases=[
-            ast.Attribute(
-                value=ast.Name(id='datamodel', ctx=ast.Load()),
-                attr='CStruct',
-                ctx=ast.Load())],
+        bases=[attr('datamodel', 'CStruct')],
         body=[
             ast.Assign(
                 targets=[
@@ -305,9 +295,7 @@ def astconv_transunit(transunit):
     class_def_astpy = ast.ClassDef(
         name='CModule',
         decorator_list=[],
-        bases=[ast.Attribute(
-            value=ast.Name(id='datamodel', ctx=ast.Load()),
-            attr='CProgram', ctx=ast.Load())],
+        bases=[attr('datamodel', 'CProgram')],
         body=members_astpy)
     module_astpy = ast.Module(body=[
         ast.ImportFrom(module='cymu',
