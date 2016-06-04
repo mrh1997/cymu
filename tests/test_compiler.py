@@ -43,13 +43,13 @@ def test_varDecl_inGlobalScope_addsVarDefToProgramType():
     ('signed int', CProgram.signed_int)])
 def test_varDecl_ofTypeX_createsTypesXCObj(name, ctype):
     prog = compile_ccode(name + ' a;')
-    assert isinstance(prog.a, ctype)
+    assert isinstance(prog.a, ctype.base_type)
 
 def test_varDecl_inGlobalScopeMultipleVars_addsVarDefsToProgramType():
     prog = compile_ccode('int a; int b, c;')
-    assert isinstance(prog.a, CProgram.int)
-    assert isinstance(prog.b, CProgram.int)
-    assert isinstance(prog.c, CProgram.int)
+    assert isinstance(prog.a, CProgram.int.base_type)
+    assert isinstance(prog.b, CProgram.int.base_type)
+    assert isinstance(prog.c, CProgram.int.base_type)
 
 def test_varDecl_inLocalScope_doesCorrectAssignment():
     prog = run_ccode('int a; a = 11; outp = a;', outp=None)
@@ -77,7 +77,7 @@ def test_assignmentOp_onGlobalVar_changesGlobalVarInFuncCall():
 
 def test_eval_onIntConstant_returnsCInt():
     def convert_with_check(int_cobj):
-        assert isinstance(int_cobj, CProgram.int)
+        assert isinstance(int_cobj, CProgram.int.base_type)
         return int_cobj.val
     prog = compile_ccode('int outp; void func() { outp = 3; }')
     prog.outp.convert = convert_with_check
@@ -229,7 +229,7 @@ def test_structDef_withVarDecl_addsVarDeclToGlobal():
             int a;
         } s;
     """)
-    assert isinstance(prog.s.a, CProgram.int)
+    assert isinstance(prog.s.a, CProgram.int.base_type)
 
 def test_structAttr_inAssignmentDest_changesField():
     prog = compile_ccode("""

@@ -15,20 +15,16 @@ class AddressSpace(object):
     pass
 
 
-class CData(object):
+class CObject(object):
     """
     All C objects are instances of this class
     """
 
-    def __init__(self, init_val=None):
+    def __init__(self, adr_space, init_val=None):
         self.__val = None
-        self.adr_space = None
+        self.adr_space = adr_space
         if init_val is not None:
             self.__val = self.convert(init_val)
-
-    @classmethod
-    def bind(cls, adr_space):
-        return BoundCType(cls, adr_space)
 
     @property
     def initialized(self):
@@ -40,9 +36,6 @@ class CData(object):
         return self.__val
 
     def set_val(self, new_value):
-        if not self.instantiated:
-            raise InstanceError('can only set value if corresponding '
-                                'CData object was instantiated')
         self.__val = self.convert(new_value)
 
     val = property(get_val, set_val)
@@ -53,19 +46,6 @@ class CData(object):
             return self.val
         else:
             raise VarAccessError('variable is not inititialized')
-
-    def create_instance(self, address_space):
-        if self.adr_space is not None:
-            raise InstanceError('Cannot create an instance fromn an already '
-                                'instantiated CData object')
-        else:
-            inst_cobj = type(self)(self.__val)
-            inst_cobj.adr_space = address_space
-            return inst_cobj
-
-    @property
-    def instantiated(self):
-        return self.adr_space is not None
 
     @classmethod
     def convert(cls, value):
@@ -78,30 +58,47 @@ class CData(object):
 
     def __repr__(self):
         if self.initialized:
-            result = '{}({!r})'.format(type(self).__name__, self.val)
+            return '{}({!r})'.format(type(self).__name__, self.val)
         else:
-            result = '{}()'.format(type(self).__name__)
-        if self.instantiated:
-            return '<'+result+' instance>'
-        else:
-            return result
+            return '{}()'.format(type(self).__name__)
 
 
 class BoundCType(object):
 
-    def __init__(self, base_type, adr_space):
-        self.base_type = base_type
+    def __init__(self, base_c_type, adr_space):
         self.adr_space = adr_space
+        self.base_c_type = base_c_type
 
     def __call__(self, *args, **argv):
-        c_obj = self.base_type(*args, **argv)
-        return c_obj.create_instance(self.adr_space)
+        return self.base_c_type(self.adr_space, *args, **argv)
 
     def __repr__(self):
         return '<bound ' + repr(self.base_type)[1:]
 
+    @property
+    def base_type(self):
+        return self.base_c_type.base_type
 
-class CIntegerBase(CData):
+
+class CType(object):
+
+    def __init__(self, c_type):
+        self.base_type = c_type
+
+    def bind(self, adr_space):
+        return BoundCType(self, adr_space)
+
+    def __call__(self, adr_space, *args, **kwargs):
+        return self.base_type(adr_space, *args, **kwargs)
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        else:
+            return BoundCType(self, instance.__adr_space__)
+
+
+class CIntegerBase(CObject):
 
     MACHINE_WORD_CTYPES = { True: None, False: None }
     BITS = None   # has to be the number of payload bits (=without sign bit)
@@ -155,44 +152,41 @@ class CIntegerBase(CData):
             signed = self.SIGNED and other.SIGNED
         else:
             signed = self.SIGNED
-        mword_ctype = self.MACHINE_WORD_CTYPES[signed]
-        py_obj = mword_ctype.convert(self) - mword_ctype.convert(other)
-        c_obj = mword_ctype(py_obj)
-        if self.instantiated:
-            return c_obj.create_instance(self.adr_space)
-        else:
-            return c_obj
+        cobj_type = self.MACHINE_WORD_CTYPES[signed]
+        py_obj = cobj_type.convert(self) - cobj_type.convert(other)
+        return cobj_type(self.adr_space, py_obj)
 
     def __isub__(self, other):
         self.val = self - other
         return self
 
     def __rsub__(self, other):
-        return type(self)(other) - self
+        ### introduce "instantiate in same addressspace"
+        return type(self)(self.adr_space, other) - self
 
 
-class CStruct(CData):
+class CStruct(CObject):
 
     # has to be a list of tuples of names and ctypes, that are describing the
     # fields in this structure
     __FIELDS__ = None
 
-    def __init__(self, *args, **argv):
+    def __init__(self, adr_space, *args, **argv):
         init_vals = dict(zip((nm for nm, ctype in self.__FIELDS__), args))
         init_vals.update(argv)
         if len(init_vals) != len(args) + len(argv):
             raise TypeError('struct got multiple initialization values for '
                             'single field')
         if len(init_vals) == 0:
-            super(CStruct, self).__init__()
+            super(CStruct, self).__init__(adr_space)
         else:
-            super(CStruct, self).__init__(())
-        for attrname, attrtype in self.__FIELDS__:
+            super(CStruct, self).__init__(adr_space, ())
+        for attr_name, attr_c_type in self.__FIELDS__:
             if self.initialized:
-                field_cobj = attrtype(init_vals.get(attrname, 0))
+                field_cobj = attr_c_type(adr_space, init_vals.get(attr_name, 0))
             else:
-                field_cobj = attrtype()
-            self.__dict__[attrname] = field_cobj
+                field_cobj = attr_c_type(adr_space)
+            self.__dict__[attr_name] = field_cobj
 
     @classmethod
     def convert(cls, val):
@@ -204,78 +198,66 @@ class CStruct(CData):
             raise TypeError('{!r} cannot be converted to object of class {!r}'
                             .format(val, cls))
 
-    def create_instance(self, address_space):
-        struct_inst = type(self)()
-        struct_inst.adr_space = address_space
-        if self.adr_space is not None:
-            raise InstanceError('Cannot create an instance fromn an already '
-                                'instantiated CData object')
-        for attrname, attrtype in self.__FIELDS__:
-            field_inst = self.__dict__[attrname].create_instance(address_space)
-            struct_inst.__dict__[attrname] = field_inst
-        return struct_inst
-
     def __repr__(self):
         if self.initialized:
-            result = '{}({})'.format(type(self).__name__, ', '.join(
+            return '{}({})'.format(type(self).__name__, ', '.join(
                 nm+'='+repr(getattr(self, nm) if isinstance(getattr(self, nm), CStruct) else getattr(self, nm).val)
                 for nm, ctype in self.__FIELDS__))
         else:
-            result = '{}()'.format(type(self).__name__)
-        if self.instantiated:
-            return '<'+result+' instance>'
-        else:
-            return result
+            return '{}()'.format(type(self).__name__)
 
 
 class CProgram(object):
 
     def __init__(self):
         super(CProgram, self).__init__()
-        adr_space = AddressSpace()
-        for attrname in dir(self):
-            attr = getattr(type(self), attrname)
-            if isinstance(attr, type):
-                if issubclass(attr, CData):
-                    self.__dict__[attrname] = attr.bind(adr_space)
-            elif isinstance(attr, CData):
-                self.__dict__[attrname] = attr.create_instance(adr_space)
+        self.__adr_space__ = AddressSpace()
+        self.global_vars()
+
+    def global_vars(self):
+        return
 
     def __repr__(self):
         return "<CProgram>"
 
+    @CType
     class unsigned_int(CIntegerBase):
         BITS = 32
         SIGNED = False
 
+    @CType
     class int(CIntegerBase):
         BITS = 32
         SIGNED = True
 
+    @CType
     class unsigned_short(CIntegerBase):
         BITS = 16
         SIGNED = False
 
+    @CType
     class short(CIntegerBase):
         BITS = 16
         SIGNED = True
 
+    @CType
     class unsigned_char(CIntegerBase):
         BITS = 8
         SIGNED = False
 
+    @CType
     class char(CIntegerBase):
         BITS = 8
         SIGNED = True
 
-    unsigned_int.MACHINE_WORD_CTYPES = \
-    int.MACHINE_WORD_CTYPES = \
-    unsigned_short.MACHINE_WORD_CTYPES = \
-    short.MACHINE_WORD_CTYPES = \
-    unsigned_char.MACHINE_WORD_CTYPES = \
-    char.MACHINE_WORD_CTYPES = {
-        True: int,
-        False: unsigned_int }
+    unsigned_int.base_type.MACHINE_WORD_CTYPES = \
+    int.base_type.MACHINE_WORD_CTYPES = \
+    unsigned_short.base_type.MACHINE_WORD_CTYPES = \
+    short.base_type.MACHINE_WORD_CTYPES = \
+    unsigned_char.base_type.MACHINE_WORD_CTYPES = \
+    char.base_type.MACHINE_WORD_CTYPES = {
+        True: int.base_type,
+        False: unsigned_int.base_type }
 
     unsigned_long = unsigned_int
     long = int

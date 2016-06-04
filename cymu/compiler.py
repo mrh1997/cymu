@@ -8,8 +8,6 @@ import clang.cindex
 # It prints the python AST of compiled C-code
 PRINT_PYAST = False
 
-### replace ast.Attribute by convinience function
-
 TYPE_MAP = {
     clang.cindex.TypeKind.CHAR_S: 'char',
     clang.cindex.TypeKind.UCHAR: 'unsigned_char',
@@ -51,6 +49,21 @@ def src_location_end_marker(astc):
         lineno=astc.extent.end.line,
         col_offset=astc.extent.end.column - 1)
 
+def fix_src_locations(node_list):
+    """
+    To ensure that all debug-linenos are in ascending order (required by python)
+    all ast-nodes WITHOUT location (usually prefix-stmts) get the
+    location of the next ast-node following WITH location.
+
+    :param list[ast.AST] stmt_list: list of AST nodes that shall be written in
+                                    ascending order
+    :rtype: list[ast.AST]
+    """
+    for next_astpy, prev_astpy in reversed(zip(node_list[1:], node_list[:-1])):
+        if not hasattr(prev_astpy, 'lineno'):
+            ast.copy_location(prev_astpy, next_astpy)
+
+
 def attr(obj, *nested_attrnames):
     if isinstance(obj, str):
         expr_astpy = ast.Name(id=obj, ctx=ast.Load())
@@ -89,12 +102,8 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
     elif expr_astc.kind.name == 'INTEGER_LITERAL':
         int_tok_astc = expr_astc.get_tokens().next()
         int_astpy = ast.Num(n=int(int_tok_astc.spelling))
-        if local_names is None:  # global variable definition?
-            type_container = attr('datamodel', 'CProgram')
-        else:
-            type_container = ast.Name(id='__globals__', ctx=ast.Load())
         return ast.Call(
-            func=attr(type_container, 'int'),
+            func=attr('__globals__', 'int'),
             args=[int_astpy],
             keywords=[],
             starargs=None,
@@ -104,7 +113,7 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
         return astconv_expr(sub_astc, local_names, prefix_stmts)
     elif expr_astc.kind.name == 'DECL_REF_EXPR':
         if local_names is not None and expr_astc.spelling in local_names:
-            return ast.Name(id=expr_astc.spelling, ctx=ast.Load())
+            return attr(expr_astc.spelling)
         else:
             return attr('__globals__', expr_astc.spelling)
     elif expr_astc.kind.name == 'MEMBER_REF_EXPR':
@@ -118,23 +127,24 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
 def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
     init_val_list = list(var_decl_astc.get_children())
     if var_decl_astc.type.spelling.startswith('struct '):
-        args = []
-        type_astpy = ast.Name(id=var_decl_astc.type.spelling.replace(' ', '_'),
-                              ctx=ast.Load())
+        c_struct_name = var_decl_astc.type.spelling.replace(' ', '_')
+        type_astpy = attr('__globals__', c_struct_name)
         assert len(init_val_list) == 1
+        args = []
     else:
+        type_astpy = attr('__globals__', TYPE_MAP[var_decl_astc.type.kind])
         if len(init_val_list) == 1:
             args = [astconv_expr(init_val_list[0], local_names, prefix_stmts)]
         else:
             args = []
-        if local_names is None:   # global variable definition?
-            type_container = attr('datamodel', 'CProgram')
-        else:
-            local_names.add(var_decl_astc.spelling)
-            type_container = ast.Name(id='__globals__', ctx=ast.Load())
-        type_astpy = attr(type_container, TYPE_MAP[var_decl_astc.type.kind])
+    if local_names is None:
+        target = attr('__globals__', var_decl_astc.spelling)
+    else:
+        target = attr(var_decl_astc.spelling)
+        local_names.add(var_decl_astc.spelling)
+    target.ctx = ast.Store()
     return ast.Assign(
-        targets=[ast.Name(id=var_decl_astc.spelling, ctx=ast.Store())],
+        targets=[target],
         value=ast.Call(
             func=type_astpy,
             args=args,
@@ -221,14 +231,7 @@ def to_stmt_list(stmt_astc, local_names):
             hasattr(stmt_astpy, 'lineno') or \
             len(stmt_list) == 0:
         stmt_list.append(stmt_astpy)
-
-    # To ensure that debug-linenos are in ascending order (required by python)
-    # the prefix statements (they do not have their own lineno) takeover the
-    # location of the corresponding prefixed statement
-    for next_astpy, prev_astpy in reversed(zip(stmt_list[1:], stmt_list[:-1])):
-        if not hasattr(prev_astpy, 'lineno'):
-            ast.copy_location(prev_astpy, next_astpy)
-
+    fix_src_locations(stmt_list)
     return stmt_list
 
 @with_src_location()
@@ -266,7 +269,7 @@ def astconv_struct_decl(struct_decl_astc, local_names, prefix_stmts):
                 value=ast.List(
                     elts=fields,
                     ctx=ast.Load()))],
-        decorator_list=[])
+        decorator_list=[attr('datamodel', 'CType')])
 
 def astconv_decl(decl_astc, local_names, prefix_stmts):
     if decl_astc.kind.name == 'VAR_DECL':
@@ -287,16 +290,33 @@ def astconv_transunit(transunit):
         tranlated to program object
     :return: datamodel.Program prog
     """
-    prefix_stmts = []
-    members_astpy = [astconv_decl(decl_astc, None, prefix_stmts)
-                     for decl_astc in transunit.cursor.get_children()]
-    assert len(prefix_stmts) == 0
+    non_var_decls_astpy = []
+    var_decls_astpy = []
+    for decl_astc in transunit.cursor.get_children():
+        prefix_stmts = []
+        decl_astpy = astconv_decl(decl_astc, None, prefix_stmts)
+        decls_astpy = (var_decls_astpy if decl_astc.kind.name == 'VAR_DECL'
+                       else non_var_decls_astpy)
+        decls_astpy += prefix_stmts
+        decls_astpy.append(decl_astpy)
+    fix_src_locations(non_var_decls_astpy)
+    fix_src_locations(var_decls_astpy)
+    if len(var_decls_astpy) == 0:
+        var_decls_astpy.append(ast.Pass())
 
     class_def_astpy = ast.ClassDef(
         name='CModule',
         decorator_list=[],
         bases=[attr('datamodel', 'CProgram')],
-        body=members_astpy)
+        body=non_var_decls_astpy + [ast.FunctionDef(
+            name='global_vars',
+            decorator_list=[],
+            args=ast.arguments(args=[ast.Name(id='__globals__',
+                                              ctx=ast.Param())],
+                               vararg=None,
+                               kwarg=None,
+                               defaults=[]),
+            body=var_decls_astpy)])
     module_astpy = ast.Module(body=[
         ast.ImportFrom(module='cymu',
                        names=[ast.alias(name='datamodel', asname=None)]),
