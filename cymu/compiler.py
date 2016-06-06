@@ -259,17 +259,15 @@ def astconv_struct_decl(struct_decl_astc, local_names, prefix_stmts):
                 attr('datamodel', 'CProgram',TYPE_MAP[fld_def_astc.type.kind])],
             ctx=ast.Load())
         for fld_def_astc in struct_decl_astc.get_children()]
-    return ast.ClassDef(
-        name='struct_s',   ### support also structs of different names
-        bases=[attr('datamodel', 'CStruct')],
-        body=[
-            ast.Assign(
-                targets=[
-                    ast.Name(id='__FIELDS__', ctx=ast.Store())],
-                value=ast.List(
-                    elts=fields,
-                    ctx=ast.Load()))],
-        decorator_list=[attr('datamodel', 'CType')])
+    return ast.Assign(
+        targets=[ast.Name(id='struct_s', ctx=ast.Store())],
+        value=ast.Call(
+            func=attr('datamodel', 'StructCType'),
+            args=[ast.Str(s='struct_s'),
+                  ast.List(elts=fields, ctx=ast.Load())],
+            keywords=[],
+            starargs=None,
+            kwargs=None))
 
 def astconv_decl(decl_astc, local_names, prefix_stmts):
     if decl_astc.kind.name == 'VAR_DECL':

@@ -1,7 +1,7 @@
 import pytest
 
-from cymu.datamodel import CProgram, CObject, CType, BoundCType, CStruct, \
-    AddressSpace, VarAccessError
+from cymu.datamodel import CProgram, CObj, CType, BoundCType, AddressSpace, VarAccessError, \
+    IntCObj, StructCType
 
 
 @pytest.fixture
@@ -69,7 +69,7 @@ class TestBoundCType(object):
 
     def test_call_returnsCObj(self, bound_int):
         cobj = bound_int()
-        assert isinstance(cobj, bound_int.base_type)
+        assert isinstance(cobj, IntCObj)
 
     def test_call_withPositionalParams_forwardsParamsToBaseType(self, bound_int):
         cobj = bound_int(3)
@@ -80,21 +80,24 @@ class TestBoundCType(object):
         assert cobj.val == 3
 
     def test_repr(self, bound_int):
-        assert repr(bound_int) == "<bound class 'cymu.datamodel.int'>"
+        assert repr(bound_int) == "<bound CType 'int'>"
+
+    def test_getAttr_retursAttrOfCType(self, bound_int):
+        assert bound_int.convert.__func__ is \
+               bound_int.base_ctype.convert.__func__
 
 
 class TestCType(object):
 
-    def test_init_withCType_setsBaseTypeAttr(self):
-        c_type = CType(CProgram.int)
-        assert c_type.base_type is CProgram.int
-
     def test_bind_returnsBoundCType(self, adr_space):
-        c_type = CType(CProgram.int)
-        bound_c_type = c_type.bind(adr_space)
-        assert isinstance(bound_c_type, BoundCType)
-        assert bound_c_type.adr_space is adr_space
-        assert bound_c_type.base_c_type is c_type
+        ctype = CProgram.int
+        bound_ctype = ctype.bind(adr_space)
+        assert isinstance(bound_ctype, BoundCType)
+        assert bound_ctype.adr_space is adr_space
+        assert bound_ctype.base_ctype is ctype
+
+    def test_repr(self):
+        assert repr(CProgram.int) == "<CType 'int'>"
 
 
 class TestCIntegerBase(object):
@@ -108,41 +111,43 @@ class TestCIntegerBase(object):
         (CProgram.unsigned_int, 0x00000000, 0xFFFFFFFF)]
 
     def test_convert_onPythonType_returnsSameObj(self, bound_int):
-        assert bound_int.base_type.convert(22) == 22
+        assert bound_int.convert(22) == 22
 
     def test_convert_onSameCObjType_returnsCObjsValue(self, bound_int):
         c_obj = bound_int(22)
-        assert bound_int.base_type.convert(c_obj) == 22
+        assert bound_int.convert(c_obj) == 22
 
     def test_convert_onDifferentCScalarSubtype_returnsCObjsValue(self, bound_int):
         c_obj = bound_int(22)
-        assert CProgram.char.base_type.convert(c_obj) == 22
+        assert CProgram.char.convert(c_obj) == 22
 
     def test_convert_onDifferentCObjType_raisesTypeError(self, bound_int):
-        class StrCObj(CObject):
+        class StrCObj(CObj):
             @classmethod
             def convert(cls, value):
                 return value
-        different_type_cobj = StrCObj('data')
+        class StrCType(CType):
+            COBJ_TYPE = StrCObj
+        different_type_cobj = StrCObj(StrCType('str'), 'data')
         with pytest.raises(TypeError):
-            bound_int.base_type.convert(different_type_cobj)
+            bound_int.convert(different_type_cobj)
 
     def test_convert_onUninitializedCObjType_raisesVarAccessError(self, bound_int):
         uninitialized_cobj = bound_int()
         with pytest.raises(VarAccessError):
-            bound_int.base_type.convert(uninitialized_cobj)
+            bound_int.convert(uninitialized_cobj)
 
     def test_convert_onDifferntPyObjType_raisesTypeError(self, bound_int):
         with pytest.raises(TypeError):
-            bound_int.base_type.convert('invalid-type')
+            bound_int.convert('invalid-type')
 
     @pytest.mark.parametrize(('ctype', 'min', 'max'), CINTEGER_RANGES)
     def test_convert_onExceedsDefinitionRange_forceToMatch(self, bound_int, ctype, max, min):
-        assert ctype.base_type.convert(max) == max
-        assert ctype.base_type.convert(max + 1) == min
-        assert ctype.base_type.convert(min) == min
-        assert ctype.base_type.convert(min - 1) == max
-        assert ctype.base_type.convert((max+1)*4 + 123) == 123
+        assert ctype.convert(max) == max
+        assert ctype.convert(max + 1) == min
+        assert ctype.convert(min) == min
+        assert ctype.convert(min - 1) == max
+        assert ctype.convert((max + 1) * 4 + 123) == 123
 
     def test_cmp_withPyObj_ok(self, bound_int):
         c_obj = bound_int(1)
@@ -175,17 +180,17 @@ class TestCIntegerBase(object):
         assert c_obj.val == 2
 
     def test_sub_onSignedAndUnsignedCObj_returnsInUnsignedCObj(self, adr_space):
-        c_signed_int = CProgram.signed_int(adr_space, 5)
+        c_signed_int = CProgram.int(adr_space, 5)
         c_unsigned_int = CProgram.unsigned_int(adr_space, 3)
         c_obj = c_signed_int - c_unsigned_int
-        assert isinstance(c_obj, CProgram.unsigned_int.base_type)
+        assert c_obj.ctype == CProgram.unsigned_int
 
     def test_sub_onSmallCObj_widensResult(self, adr_space):
         c_char_plus100 = CProgram.char(adr_space, 100)
         c_char_minus100 = CProgram.char(adr_space, -100)
         c_obj = c_char_minus100 - c_char_plus100
         assert c_obj.val == -200
-        assert isinstance(c_obj, CProgram.signed_int.base_type)
+        assert c_obj.ctype == CProgram.int
 
     def test_sub_copiesAdrSpace(self, adr_space):
         c_char_5 = CProgram.char(adr_space, 5)
@@ -201,6 +206,11 @@ class TestCIntegerBase(object):
     def test_rsub_withPyObj(self, bound_int):
         c_obj = 5 - bound_int(3)
         assert c_obj.val == 2
+
+    def test_rsub_withPyObj_convertsPyObjToMachineWord(self, adr_space):
+        c_obj = CProgram.char(adr_space, 100)
+        result = 500 - c_obj
+        assert result.val == 400
 
     def test_isub_withPyObj(self, bound_int):
         c_obj = bound_int(5)
@@ -243,65 +253,66 @@ class TestCIntegerBase(object):
 
 class TestCStruct(object):
 
-    @classmethod
-    def setup_class(cls):
-        class SimpleStruct(CStruct):
-            __FIELDS__ = [('a', CProgram.int),
-                          ('b', CProgram.short)]
-        class NestedStruct(CStruct):
-            __FIELDS__ = [('field', CProgram.int),
-                          ('inner_struct', CType(SimpleStruct))]
-        cls.SimpleStruct = SimpleStruct
-        cls.NestedStruct = NestedStruct
+    @pytest.fixture
+    def struct_simple(self):
+        return StructCType('struct_simple', [
+            ('a', CProgram.int),
+            ('b', CProgram.short)])
 
-    def test_create_createsCObjForEveryField(self, adr_space):
-        c_obj = self.SimpleStruct(adr_space)
-        assert isinstance(c_obj.a, CProgram.int.base_type)
-        assert isinstance(c_obj.b, CProgram.short.base_type)
+    @pytest.fixture
+    def struct_nested(self, struct_simple):
+        return StructCType('struct_nested', [
+            ('field', CProgram.int),
+            ('inner_struct', struct_simple)])
 
-    def test_create_withoutArgs_createsUninitializedFields(self, adr_space):
-        c_obj = self.SimpleStruct(adr_space)
+    def test_create_createsCObjForEveryField(self, adr_space, struct_simple):
+        c_obj = struct_simple(adr_space)
+        assert c_obj.a.ctype == CProgram.int
+        assert c_obj.b.ctype == CProgram.short
+
+    def test_create_withoutArgs_createsUninitializedFields(self, adr_space, struct_simple):
+        c_obj = struct_simple(adr_space)
         assert not c_obj.a.initialized
         assert not c_obj.initialized
 
-    def test_create_withPositionaArgs_initializesFieldsByPosition(self, adr_space):
-        c_obj = self.SimpleStruct(adr_space, 1, 2)
+    def test_create_withPositionaArgs_initializesFieldsByPosition(self, adr_space, struct_simple):
+        c_obj = struct_simple(adr_space, 1, 2)
         assert c_obj.a.val == 1
         assert c_obj.b.val == 2
         assert c_obj.initialized
 
-    def test_create_withKeywordArgs_initializesFieldsByPosition(self, adr_space):
-        c_obj = self.SimpleStruct(adr_space, b=1, a=2)
+    def test_create_withKeywordArgs_initializesFieldsByPosition(self, adr_space, struct_simple):
+        c_obj = struct_simple(adr_space, b=1, a=2)
         assert c_obj.a.val == 2
         assert c_obj.b.val == 1
         assert c_obj.initialized
 
-    def test_create_withPartialProvidedArgsOnly_initializesMissingFieldsWith0(self, adr_space):
-        c_obj = self.SimpleStruct(adr_space, 1)
+    def test_create_withPartialProvidedArgsOnly_initializesMissingFieldsWith0(self, adr_space, struct_simple):
+        c_obj = struct_simple(adr_space, 1)
         assert c_obj.b.val == 0
         assert c_obj.initialized
 
-    def test_create_onNestedStruct_recursiveCreatesInnerStruct(self, adr_space):
-        c_obj = self.NestedStruct(adr_space)
-        assert isinstance(c_obj.inner_struct, self.SimpleStruct)
+    def test_create_onNestedStruct_recursiveCreatesInnerStruct(self, adr_space, struct_simple, struct_nested):
+        c_obj = struct_nested(adr_space)
+        assert c_obj.inner_struct.ctype == struct_simple
 
-    def test_create_onNestedStructWithPartialProvidedArgs_clearsInnerStructs(self, adr_space):
-        c_obj = self.NestedStruct(adr_space, 1)
+    def test_create_onNestedStructWithPartialProvidedArgs_clearsInnerStructs(self, adr_space, struct_simple, struct_nested):
+        c_obj = struct_nested(adr_space, 1)
         assert c_obj.inner_struct.a == 0
         assert c_obj.inner_struct.b == 0
 
-    @pytest.mark.xfail
-    def test_create_onNestedStructWithProvidedInnerStructsAsCObj(self, adr_space):
-        c_obj = self.NestedStruct(adr_space, 1, self.SimpleStruct(2, 3))
+    @pytest.mark.xfail()
+    def test_create_onNestedStructWithProvidedInnerStructsAsCObj(self, adr_space, struct_simple, struct_nested):
+        c_obj = struct_nested(adr_space, 1, struct_simple(adr_space, 2, 3))
         assert c_obj.field == 1
         assert c_obj.inner_struct.a == 2
         assert c_obj.inner_struct.b == 3
 
-    @pytest.mark.xfail
-    def test_repr_onInitialized_returnsDataAsOrderedKeywordInitializers(self):
-        c_obj = self.NestedStruct(3, self.SimpleStruct(b=10))
+    @pytest.mark.xfail()
+    def test_repr_onInitialized_returnsDataAsOrderedKeywordInitializers(self, adr_space, struct_simple, struct_nested):
+        c_obj = self.struct_nested(adr_space, 3, struct_simple(b=10))
         assert repr(c_obj) == \
-               'NestedStruct(field=3, inner_struct=SimpleStruct(a=0, b=10))'
+               'struct_nested(field=3, inner_struct=struct_simple(a=0, b=10))'
 
 
 class TestCProgram(object):
@@ -311,7 +322,7 @@ class TestCProgram(object):
             typedef = CProgram.int
         prog = ProgramWithTypeDef()
         assert isinstance(prog.typedef, BoundCType)
-        assert prog.typedef.base_c_type is CProgram.int
+        assert prog.typedef.base_ctype is CProgram.int
 
     def test_create_onVarMember_createsInstanceVars(self):
         class ProgramWithVar(CProgram):
@@ -319,7 +330,7 @@ class TestCProgram(object):
                 super(ProgramWithVar, self).global_vars()
                 self.var = self.int()
         prog = ProgramWithVar()
-        assert isinstance(prog.var, prog.int.base_type)
+        assert isinstance(prog.var, prog.int.cobj_type)
 
     def test_create_onVarMemberOfCustomTypeDef_createsInstanceVars(self):
         class ProgramWithVar(CProgram):
@@ -328,4 +339,4 @@ class TestCProgram(object):
                 super(ProgramWithVar, self).global_vars()
                 self.var = self.typedef()
         prog = ProgramWithVar()
-        assert isinstance(prog.var, prog.typedef.base_type)
+        assert isinstance(prog.var, prog.typedef.cobj_type)

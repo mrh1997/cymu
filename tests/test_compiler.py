@@ -1,7 +1,7 @@
 import pytest
 
 from cymu import compiler
-from cymu.datamodel import CProgram, CStruct
+from cymu.datamodel import CProgram, StructCType
 
 
 def compile_ccode(c_src):
@@ -44,9 +44,9 @@ def test_varDecl_ofTypeX_createXCObj(name):
 
 def test_varDecl_inGlobalScopeMultipleVars_addsVarDefsToProgramType():
     prog = compile_ccode('int a; int b, c;')
-    assert isinstance(prog.a, CProgram.int.base_type)
-    assert isinstance(prog.b, CProgram.int.base_type)
-    assert isinstance(prog.c, CProgram.int.base_type)
+    assert prog.a.ctype == CProgram.int
+    assert prog.b.ctype == CProgram.int
+    assert prog.c.ctype == CProgram.int
 
 def test_varDecl_inLocalScope_doesCorrectAssignment():
     prog = run_ccode('int a; a = 11; outp = a;', outp=None)
@@ -74,7 +74,7 @@ def test_assignmentOp_onGlobalVar_changesGlobalVarInFuncCall():
 
 def test_eval_onIntConstant_returnsCInt():
     def convert_with_check(int_cobj):
-        assert isinstance(int_cobj, CProgram.int.base_type)
+        assert isinstance(int_cobj, CProgram.int.cobj_type)
         return int_cobj.val
     prog = compile_ccode('int outp; void func() { outp = 3; }')
     prog.outp.convert = convert_with_check
@@ -204,11 +204,11 @@ def test_funcDecl_withWhileStmtWithPrefixStmt_hasNoSourceLineNoReferenceForCompa
         }""")
     assert get_linenos(prog.func) == [3, 4, 6, 8]
 
-def test_structDef_returnCStruct():
+def test_structDef_returnCStructObj():
     prog = compile_ccode('struct s { };')
-    struct_s = prog.struct_s.base_type
-    assert issubclass(struct_s, CStruct)
-    assert struct_s.__name__ == 'struct_s'
+    struct_s = prog.struct_s
+    assert isinstance(struct_s.base_ctype, StructCType)
+    assert struct_s.name == 'struct_s'
 
 def test_structDef_withFields_setsFieldDefInPyClass():
     prog = compile_ccode("""
@@ -217,8 +217,8 @@ def test_structDef_withFields_setsFieldDefInPyClass():
             char b;
         } ;
     """)
-    struct_s = prog.struct_s.base_type
-    assert struct_s.__FIELDS__ == [('a', CProgram.int), ('b', CProgram.char)]
+    struct_ctype = prog.struct_s
+    assert struct_ctype.fields == [('a', CProgram.int), ('b', CProgram.char)]
 
 def test_structDef_withVarDecl_addsVarDeclToGlobal():
     prog = compile_ccode("""
@@ -226,7 +226,7 @@ def test_structDef_withVarDecl_addsVarDeclToGlobal():
             int a;
         } s;
     """)
-    assert isinstance(prog.s.a, CProgram.int.base_type)
+    assert prog.s.a.ctype == CProgram.int
 
 def test_structAttr_inAssignmentDest_changesField():
     prog = compile_ccode("""
