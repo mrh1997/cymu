@@ -35,15 +35,12 @@ def test_varDecl_inGlobalScope_addsVarDefToProgramType():
     prog = compile_ccode('int a;')
     _ = prog.a
 
-@pytest.mark.parametrize(('name', 'ctype'), [
-    ('char', CProgram.char),
-    ('short', CProgram.short),
-    ('int', CProgram.int),
-    ('unsigned int', CProgram.unsigned_int),
-    ('signed int', CProgram.signed_int)])
-def test_varDecl_ofTypeX_createsTypesXCObj(name, ctype):
+@pytest.mark.parametrize('name',
+                         ['char', 'short', 'int', 'long',
+                          'unsigned int', 'signed int',])
+def test_varDecl_ofTypeX_createXCObj(name):
     prog = compile_ccode(name + ' a;')
-    assert isinstance(prog.a, ctype.base_type)
+    assert type(prog.a).__name__, name.replace(' ', '_')
 
 def test_varDecl_inGlobalScopeMultipleVars_addsVarDefsToProgramType():
     prog = compile_ccode('int a; int b, c;')

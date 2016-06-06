@@ -221,6 +221,16 @@ class CProgram(object):
         return "<CProgram>"
 
     @CType
+    class unsigned_long(CIntegerBase):
+        BITS = 32
+        SIGNED = False
+
+    @CType
+    class long(CIntegerBase):
+        BITS = 32
+        SIGNED = True
+
+    @CType
     class unsigned_int(CIntegerBase):
         BITS = 32
         SIGNED = False
@@ -258,9 +268,6 @@ class CProgram(object):
     char.base_type.MACHINE_WORD_CTYPES = {
         True: int.base_type,
         False: unsigned_int.base_type }
-
-    unsigned_long = unsigned_int
-    long = int
 
     signed_char = char
     signed_short = short
