@@ -48,15 +48,6 @@ def test_varDecl_inGlobalScopeMultipleVars_addsVarDefsToProgramType():
     assert prog.b.ctype == CProgram.int
     assert prog.c.ctype == CProgram.int
 
-def test_varDecl_inLocalScope_doesCorrectAssignment():
-    prog = run_ccode('int a; a = 11; outp = a;', outp=None)
-    assert prog.outp.val == 11
-
-def test_varDecl_inLocalScope_doesNotAddVarToProgramTypeOrGlobalScope():
-    prog = run_ccode('int a; a = 11;')
-    assert not hasattr(prog, 'a')
-    assert 'a' not in globals()
-
 ### inner scope overwrites variable of same name of outer scope
 
 ### local assignment shall not replace CObject but only contained pyobj
@@ -74,7 +65,7 @@ def test_assignmentOp_onGlobalVar_changesGlobalVarInFuncCall():
 
 def test_eval_onIntConstant_returnsCInt():
     def convert_with_check(int_cobj):
-        assert isinstance(int_cobj, CProgram.int.cobj_type)
+        assert isinstance(int_cobj, IntCObj)
         return int_cobj.val
     prog = compile_ccode('int outp; void func() { outp = 3; }')
     prog.outp.convert = convert_with_check
@@ -98,6 +89,15 @@ def test_assignment_inGlobalVarDecl_raisesCompilerError():
 def test_eval_onGlobalVar_rerievesContentOfGlobalVar():
     prog = run_ccode('outp = inp;', inp=10, outp=None)
     assert prog.outp.val == 10
+
+def test_varDecl_inLocalScope_doesCorrectAssignment():
+    prog = run_ccode('int a; a = 11; outp = a;', outp=None)
+    assert prog.outp.val == 11
+
+def test_varDecl_inLocalScope_doesNotAddVarToProgramTypeOrGlobalScope():
+    prog = run_ccode('int a; a = 11;')
+    assert not hasattr(prog, 'a')
+    assert 'a' not in globals()
 
 @pytest.mark.parametrize(('inp', 'outp_before', 'outp_after'), [(0, 11, 11),
                                                                 (1, 11, 22)])

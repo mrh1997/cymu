@@ -7,10 +7,6 @@ class VarAccessError(DataModelError):
     pass
 
 
-class InstanceError(DataModelError):
-    pass
-
-
 class AddressSpace(object):
     pass
 
@@ -20,44 +16,15 @@ class CObj(object):
     All C objects are instances of this class
     """
 
-    def __init__(self, ctype, adr_space, init_val=None):
+    def __init__(self, ctype, adr_space):
         self.ctype = ctype
         self.adr_space = adr_space
-        self.__val = None
-        if init_val is not None:
-            self.__val = self.ctype.convert(init_val)
 
     @property
     def initialized(self):
-        return self.__val is not None
+        return False
 
-    def get_val(self):
-        if self.__val is None:
-            raise VarAccessError('variable is not initialized')
-        return self.__val
-
-    def set_val(self, new_value):
-        self.__val = self.ctype.convert(new_value)
-
-    val = property(get_val, set_val)
-
-    @property
-    def checked_val(self):
-        if self.initialized:
-            return self.val
-        else:
-            raise VarAccessError('variable is not inititialized')
-
-    def __set__(self, instance, value):
-        raise VarAccessError(
-            "Cannot change CObjects at runtime (probably you did "
-            "'prog.varname = data' instead of 'prog.varname.val = data')")
-
-    def __repr__(self):
-        if self.initialized:
-            return '{0.ctype.name}({0.val!r})'.format(self)
-        else:
-            return '{0.ctype.name}()'.format(self)
+    val = property()
 
 
 class BoundCType(object):
@@ -71,10 +38,6 @@ class BoundCType(object):
 
     def __repr__(self):
         return '<bound ' + repr(self.base_ctype)[1:]
-
-    @property
-    def cobj_type(self):
-        return self.base_ctype.COBJ_TYPE
 
     def __getattr__(self, item):
         return getattr(self.base_ctype, item)
@@ -103,42 +66,98 @@ class CType(object):
     def __repr__(self):
         return '<CType {!r}>'.format(self.name)
 
-    def convert(self, value):
-        raise NotImplementedError('This is an abstract base class!')
+    def cast(self, cobj, adr_space=None):
+        raise NotImplementedError()
 
 
 class IntCObj(CObj):
 
-    def __cmp__(self, value):
-        return cmp(self.val, self.ctype.convert(value))
+    def __init__(self, ctype, adr_space, init_val=None):
+        super(IntCObj, self).__init__(ctype, adr_space)
+        self.__val = None
+        if init_val is not None:
+            self.val = init_val
+
+    @property
+    def initialized(self):
+        return self.__val is not None
+
+    def get_val(self):
+        if self.initialized:
+            return self.__val
+        else:
+            raise VarAccessError('value is not initialized')
+
+    def set_val(self, new_value):
+        ctype = self.ctype
+
+        if isinstance(new_value, IntCObj):
+            py_obj = new_value.__val
+        elif isinstance(new_value, (int, long)):
+            py_obj = new_value
+        else:
+            raise TypeError(
+                '{!r} cannot be converted to object of class {!r}'
+                .format(new_value, self))
+
+        if ctype.signed:
+            py_obj -= ctype.min()
+            py_obj &= ((1 << ctype.bits) - 1)
+            py_obj += ctype.min()
+        else:
+            py_obj &= ((1 << ctype.bits) - 1)
+
+        # convert back long back to int if possible
+        py_obj_as_int = int(py_obj)
+        if py_obj_as_int == py_obj:
+            py_obj = py_obj_as_int
+
+        self.__val = py_obj
+
+    val = property(get_val, set_val)
+
+    def __repr__(self):
+        if self.initialized:
+            return '{}({!r})'.format(self.ctype.name, self.__val)
+        else:
+            return '{}()'.format(self.ctype.name)
+
+    def __cmp__(self, other):
+        self_casted, other_casted = self.ctype.implicit_cast(self, other)
+        return cmp(self_casted.__val, other_casted.__val)
 
     def __nonzero__(self):
-        return True if self.val else False
+        return True if self.__val else False
+
+    def __int__(self):
+        if self.__val is None:
+            raise VarAccessError('variable is not initialized')
+        else:
+            return self.__val
 
     def __sub__(self, other):
-        cobj_type = self.ctype.common_ctype(other)
-        pyobj = cobj_type.convert(self) - cobj_type.convert(other)
-        return cobj_type(self.adr_space, pyobj)
+        self_casted, other_casted = self.ctype.implicit_cast(self, other)
+        pyobj = self_casted.__val - other_casted.__val
+        return self_casted.ctype(self.adr_space, pyobj)
 
     def __isub__(self, other):
         self.val = self - other
         return self
 
     def __rsub__(self, other):
-        ### introduce "instantiate in same addressspace"
-        ctype = self.ctype.common_ctype(other)
-        return ctype(self.adr_space, other) - self
+        self_casted, other_casted = self.ctype.implicit_cast(self, other)
+        return other_casted - self_casted
 
 
 class IntCType(CType):
 
     COBJ_TYPE = IntCObj
 
-    def __init__(self, name, bits, signed, machine_words=None):
+    def __init__(self, name, bits, signed):
         super(IntCType, self).__init__(name)
         self.bits = bits
         self.signed = signed
-        self.machine_words = machine_words
+        self.implicit_cast = None
 
     def min(self):
         if self.signed:
@@ -152,52 +171,43 @@ class IntCType(CType):
         else:
             return (1 << self.bits) - 1
 
-    def convert(self, val):
-        if isinstance(val, IntCObj):
-            py_obj = val.val
-        elif isinstance(val, (int, long)):
-            py_obj = val
-        else:
-            raise TypeError('{!r} cannot be converted to object of class {!r}'
-                            .format(val, self))
+    def cast(self, cobj, adr_space=None):
+        if isinstance(cobj, IntCObj):
+            if adr_space is None:
+                adr_space = cobj.adr_space
+            if cobj.ctype == self and cobj.adr_space == adr_space:
+                return cobj
+        return self(adr_space, int(cobj))
 
-        if self.signed:
-            py_obj -= self.min()
-            py_obj &= ((1 << self.bits) - 1)
-            py_obj += self.min()
-        else:
-            py_obj &= ((1 << self.bits) - 1)
-
-        py_obj_as_int = int(py_obj)
-        if py_obj_as_int == py_obj:
-            py_obj = py_obj_as_int
-
-        return py_obj
-
-    def common_ctype(self, other):
-        if isinstance(other, self.COBJ_TYPE):
-            signed = self.signed and other.ctype.signed
-        else:
-            signed = self.signed
-        cobj_type = self.machine_words[signed]
-        return cobj_type
+    @staticmethod
+    def create_implicit_caster(int_ctype, uint_ctype, *other_ctypes):
+        def implicit_cast(*cobjs):
+            signed = True
+            adr_space = None
+            for cobj in cobjs:
+                if isinstance(cobj, IntCObj):
+                    signed &= cobj.ctype.signed
+                    if adr_space is not None:
+                        assert adr_space is cobj.adr_space
+                    else:
+                        adr_space = cobj.adr_space
+            widened_ctype = int_ctype if signed else uint_ctype
+            return [widened_ctype.cast(cobj, adr_space) for cobj in cobjs]
+        return implicit_cast
 
 
 class StructCObj(CObj):
 
     def __init__(self, ctype, adr_space, *args, **argv):
+        super(StructCObj, self).__init__(ctype, adr_space)
         init_vals = dict(zip((nm for nm, ctype in ctype.fields), args))
         init_vals.update(argv)
         if len(init_vals) != len(args) + len(argv):
             raise TypeError('struct got multiple initialization values for '
                             'single field')
-        if len(init_vals) == 0:
-            super(StructCObj, self).__init__(ctype, adr_space)
-        else:
-            super(StructCObj, self).__init__(ctype, adr_space, ())
         for attr_name, attr_c_type in ctype.fields:
-            if self.initialized:
-                field_cobj = attr_c_type(adr_space, init_vals.get(attr_name, 0))
+            if len(init_vals) > 0:
+                field_cobj = attr_c_type(adr_space, init_vals.get(attr_name, 0))    ### use .zero instead of 0
             else:
                 field_cobj = attr_c_type(adr_space)
             self.__dict__[attr_name] = field_cobj
@@ -210,6 +220,11 @@ class StructCObj(CObj):
         else:
             return '{}()'.format(type(self).__name__)
 
+    @property
+    def initialized(self):
+        return all(getattr(self, fname).initialized
+                   for fname, ftype in self.ctype.fields)
+
 
 class StructCType(CType):
 
@@ -218,15 +233,6 @@ class StructCType(CType):
     def __init__(self, name, fields):
         super(StructCType, self).__init__(name)
         self.fields = fields
-
-    def convert(self, val):
-        if isinstance(val, StructCObj):
-            return {nm: getattr(val, nm) for nm, ctype in self.__FIELDS__}
-        elif isinstance(val, (tuple, dict)):
-            return val
-        else:
-            raise TypeError('{!r} cannot be converted to object of class {!r}'
-                            .format(val, self))
 
 
 class CProgram(object):
@@ -242,21 +248,20 @@ class CProgram(object):
     def __repr__(self):
         return "<CProgram>"
 
-    int = IntCType('int', bits=32, signed=True)
+    unsigned_long = IntCType('unsigned_long', bits=32, signed=False)
+    long = IntCType('long', bits=32, signed=True)
     unsigned_int = IntCType('unsigned_int', bits=32, signed=False)
-    MACHINE_WORDS = int.machine_words = unsigned_int.machine_words = {
-        True: int,
-        False: unsigned_int }
-
-    unsigned_long = IntCType('unsigned_long', bits=32, signed=False,
-                             machine_words=MACHINE_WORDS)
-    long = IntCType('long', bits=32, signed=True,
-                    machine_words=MACHINE_WORDS)
-    unsigned_short = IntCType('unsigned_short', bits=16, signed=False,
-                              machine_words=MACHINE_WORDS)
-    short = IntCType('short', bits=16, signed=True,
-                     machine_words=MACHINE_WORDS)
-    unsigned_char = IntCType('unsigned_char', bits=8, signed=False,
-                             machine_words=MACHINE_WORDS)
-    char = IntCType('char', bits=8, signed=True,
-                    machine_words=MACHINE_WORDS)
+    int = IntCType('int', bits=32, signed=True)
+    unsigned_short = IntCType('unsigned_short', bits=16, signed=False)
+    short = IntCType('short', bits=16, signed=True)
+    unsigned_char = IntCType('unsigned_char', bits=8, signed=False)
+    char = IntCType('char', bits=8, signed=True)
+    
+    long.implicit_cast = unsigned_long.implicit_cast = \
+    int.implicit_cast = unsigned_int.implicit_cast = \
+    short.implicit_cast = unsigned_short.implicit_cast = \
+    char.implicit_cast = unsigned_char.implicit_cast = \
+        IntCType.create_implicit_caster(int, unsigned_int,
+                                     long, unsigned_long,
+                                     short, unsigned_short,
+                                     char, unsigned_char)
