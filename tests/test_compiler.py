@@ -1,7 +1,7 @@
 import pytest
 
 from cymu import compiler
-from cymu.datamodel import CProgram, StructCType
+from cymu.datamodel import CProgram, StructCType, IntCObj
 
 
 def compile_ccode(c_src):
@@ -64,12 +64,14 @@ def test_assignmentOp_onGlobalVar_changesGlobalVarInFuncCall():
     assert prog.outp.val == 10
 
 def test_eval_onIntConstant_returnsCInt():
-    def convert_with_check(int_cobj):
-        assert isinstance(int_cobj, IntCObj)
-        return int_cobj.val
+    class MyIntCObj(IntCObj):
+        val = None    # replace property by simple val, which can be overwritten
     prog = compile_ccode('int outp; void func() { outp = 3; }')
-    prog.outp.convert = convert_with_check
+    prog.outp = MyIntCObj(prog.__adr_space__, CProgram.int)
     prog.func()
+    int_const = prog.outp.val
+    assert isinstance(int_const, IntCObj)
+    assert int_const.val == 3
 
 def test_assignmentSubOp_ok():
     prog = run_ccode('inoutp -= 3;', inoutp=7)

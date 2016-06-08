@@ -82,6 +82,11 @@ class TestCType(object):
     def test_implicitCast_onPyInt_returnsSignedCObj(self, implicit_cast, adr_space):
         assert implicit_cast(1) == [CProgram.unsigned_int(adr_space, 1)]
 
+    def test_createZeroCObj_returnIntWithValIs0(self, adr_space):
+        zero_cobj = CProgram.int.create_zero_cobj()
+        assert zero_cobj.ctype == CProgram.int
+        assert zero_cobj.val == 0
+
 
 class TestIntCObj(object):
 
@@ -134,6 +139,11 @@ class TestIntCObj(object):
         cobj = bound_int()
         cobj.val = bound_int(11)
         assert int(cobj) == 11
+
+    def test_setVal_onUnitializedIntCObj_raisesValAccessError(self, bound_int):
+        cint = bound_int(1)
+        with pytest.raises(VarAccessError):
+            cint.val = bound_int()
 
     def test_setVal_withInt_ok(self, bound_int, adr_space):
         cobj = bound_int()
@@ -309,13 +319,18 @@ class TestIntCObj(object):
         assert int(cobj) == 0
 
 
+@pytest.fixture
+def struct_simple():
+    return StructCType('struct_simple', [
+        ('a', CProgram.int),
+        ('b', CProgram.short)])
+
+
 class TestCStruct(object):
 
     @pytest.fixture
-    def struct_simple(self):
-        return StructCType('struct_simple', [
-            ('a', CProgram.int),
-            ('b', CProgram.short)])
+    def simple_cobj(self, struct_simple, adr_space):
+        return struct_simple(adr_space, a=1, b=2)
 
     @pytest.fixture
     def struct_nested(self, struct_simple):
@@ -338,10 +353,18 @@ class TestCStruct(object):
         assert cobj.a == 1
         assert cobj.b == 2
 
+    def test_create_withTooMuchPositionaArgs_raisesTypeError(self, adr_space, struct_simple):
+        with pytest.raises(TypeError):
+            cobj = struct_simple(adr_space, 1, 2, 3)
+
     def test_create_withKeywordArgs_initializesFieldsByPosition(self, adr_space, struct_simple):
         cobj = struct_simple(adr_space, b=1, a=2)
         assert cobj.a == 2
         assert cobj.b == 1
+
+    def test_create_withUnkownKeywordsArgs_raisesTypeError(self, adr_space, struct_simple):
+        with pytest.raises(TypeError):
+            cobj = struct_simple(adr_space, c=3)
 
     def test_create_withPartialProvidedArgsOnly_initializesMissingFieldsWith0(self, adr_space, struct_simple):
         cobj = struct_simple(adr_space, 1)
@@ -358,6 +381,77 @@ class TestCStruct(object):
         cobj.b.val = 1
         assert cobj.initialized
 
+    def test_getVal_onInitializedCObj_returnsDict(self, simple_cobj):
+        assert simple_cobj.val == dict(a=1, b=2)
+
+    def test_getVal_onUninitializedCObj_raisesVarAccessError(self, struct_simple):
+        cobj = struct_simple(adr_space)
+        with pytest.raises(VarAccessError):
+            _ = cobj.val
+
+    def test_setVal_onTuple_setsFields(self, simple_cobj):
+        simple_cobj.val = [3, 4]
+        assert simple_cobj.a == 3
+        assert simple_cobj.b == 4
+
+    def test_setVal_onTupleWithTooLessFields_raisesTypeError(self, struct_simple):
+        cobj = struct_simple(adr_space)
+        with pytest.raises(TypeError):
+            cobj.val = [1]
+
+    def test_setVal_onTupleWithTooMuchFields_raisesTypeError(self, struct_simple):
+        cobj = struct_simple(adr_space)
+        with pytest.raises(TypeError):
+            cobj.val = [1, 2, 3]
+
+    def test_setVal_onMapping_setsFields(self, simple_cobj):
+        simple_cobj.val = dict(a=3, b=4)
+        assert simple_cobj.a == 3
+        assert simple_cobj.b == 4
+
+    def test_setVal_onMappingWithTooLessFields_raisesTypeError(self, struct_simple):
+        cobj = struct_simple(adr_space)
+        with pytest.raises(TypeError):
+            cobj.val = dict(a=1)
+
+    def test_setVal_onMappingWithUnknownFieldnames_raisesTypeError(self, struct_simple):
+        cobj = struct_simple(adr_space)
+        with pytest.raises(TypeError):
+            cobj.val = dict(c=1)
+
+    def test_setVal_onStructCObjOfSameType_setsFields(self, simple_cobj, struct_simple):
+        simple_cobj.val = struct_simple(adr_space, 3, 4)
+        assert simple_cobj.a == 3
+        assert simple_cobj.b == 4
+
+    def test_setVal_onCStructOfDifferentType_raisesTypeError(self, simple_cobj, struct_nested, adr_space):
+        with pytest.raises(TypeError):
+            simple_cobj.val = struct_nested(adr_space, 1)
+
+    def test_setVal_onNoneCObj_raisesTypeError(self, simple_cobj):
+        with pytest.raises(TypeError):
+            simple_cobj.val = "3, 4"
+
+    def test_setVal_onUninitializedCObj_raisesVarAccessError(self, simple_cobj, struct_simple, adr_space):
+        with pytest.raises(VarAccessError):
+            simple_cobj.val = struct_simple(adr_space)
+
+    def test_len_returnsNumberOfFields(self, simple_cobj):
+        assert len(simple_cobj) == 2
+
+    def test_getItem_onInteger_returnsNthCObj(self, simple_cobj):
+        nth_item = simple_cobj[0]
+        assert nth_item.ctype == CProgram.int
+        assert nth_item == 1
+
+    def test_getItem_onSlice_returnsTupleOfCObjs(self, simple_cobj):
+        slice_items = simple_cobj[0:2:2]
+        assert isinstance(slice_items, tuple)
+        assert all(si.ctype == CProgram.int for si in slice_items)
+
+    def test_iter_returnsIterator(self, simple_cobj):
+        assert iter(simple_cobj).next() == 1
+
     def test_create_onNestedStruct_recursiveCreatesInnerStruct(self, adr_space, struct_simple, struct_nested):
         cobj = struct_nested(adr_space)
         assert cobj.inner_struct.ctype == struct_simple
@@ -367,20 +461,28 @@ class TestCStruct(object):
         assert cobj.inner_struct.a == 0
         assert cobj.inner_struct.b == 0
 
-    ### test .initialized on structs
+    ### test __eq__ / __ne__
 
-    @pytest.mark.xfail()
+    ### test .cast
+
     def test_create_onNestedStructWithProvidedInnerStructsAsCObj(self, adr_space, struct_simple, struct_nested):
         cobj = struct_nested(adr_space, 1, struct_simple(adr_space, 2, 3))
         assert cobj.field == 1
         assert cobj.inner_struct.a == 2
         assert cobj.inner_struct.b == 3
 
-    @pytest.mark.xfail()
     def test_repr_onInitialized_returnsDataAsOrderedKeywordInitializers(self, adr_space, struct_simple, struct_nested):
-        cobj = self.struct_nested(adr_space, 3, struct_simple(b=10))
+        cobj = struct_nested(adr_space, 3, struct_simple(adr_space, b=10))
         assert repr(cobj) == \
                'struct_nested(field=3, inner_struct=struct_simple(a=0, b=10))'
+
+
+class TestStructCType(object):
+
+    def test_createZeroCObj_returnsStructWithIntsOf0(self, struct_simple):
+        zero_cobj = struct_simple.create_zero_cobj()
+        assert zero_cobj.ctype == struct_simple
+        assert zero_cobj.val == dict(a=0, b=0)
 
 
 class TestCProgram(object):

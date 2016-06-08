@@ -1,3 +1,5 @@
+import collections
+
 
 class DataModelError(Exception):
     pass
@@ -69,6 +71,9 @@ class CType(object):
     def cast(self, cobj, adr_space=None):
         raise NotImplementedError()
 
+    def create_zero_cobj(self, adr_space=None):
+        raise NotImplementedError()
+
 
 class IntCObj(CObj):
 
@@ -86,12 +91,14 @@ class IntCObj(CObj):
         if self.initialized:
             return self.__val
         else:
-            raise VarAccessError('value is not initialized')
+            raise VarAccessError('integer is not initialized')
 
     def set_val(self, new_value):
         ctype = self.ctype
 
         if isinstance(new_value, IntCObj):
+            if not new_value.initialized:
+                raise VarAccessError('Value is not initialized')
             py_obj = new_value.__val
         elif isinstance(new_value, (int, long)):
             py_obj = new_value
@@ -191,39 +198,92 @@ class IntCType(CType):
                         assert adr_space is cobj.adr_space
                     else:
                         adr_space = cobj.adr_space
-            widened_ctype = int_ctype if signed else uint_ctype
-            return [widened_ctype.cast(cobj, adr_space) for cobj in cobjs]
+            result_ctype = int_ctype if signed else uint_ctype
+            return [result_ctype.cast(cobj, adr_space) for cobj in cobjs]
         return implicit_cast
 
+    def create_zero_cobj(self, adr_space=None):
+        return self(adr_space, 0)
 
-class StructCObj(CObj):
+
+class StructCObj(CObj, collections.Sequence):
 
     def __init__(self, ctype, adr_space, *args, **argv):
         super(StructCObj, self).__init__(ctype, adr_space)
-        init_vals = dict(zip((nm for nm, ctype in ctype.fields), args))
-        init_vals.update(argv)
-        if len(init_vals) != len(args) + len(argv):
-            raise TypeError('struct got multiple initialization values for '
-                            'single field')
-        for attr_name, attr_c_type in ctype.fields:
-            if len(init_vals) > 0:
-                field_cobj = attr_c_type(adr_space, init_vals.get(attr_name, 0))    ### use .zero instead of 0
-            else:
-                field_cobj = attr_c_type(adr_space)
-            self.__dict__[attr_name] = field_cobj
+        for attr_name, attr_ctype in ctype.fields:
+            self.__dict__[attr_name] = attr_ctype(adr_space)
+        if len(args) > 0 or len(argv) > 0:
+            if len(args) > len(self.ctype.fields):
+                raise TypeError(
+                    'too much positional initialization values (must be {}, '
+                    'but got {})'.format(len(self.ctype.fields), len(args)))
+            init_vals = {fname: ftype.create_zero_cobj()
+                         for fname, ftype in self.ctype.fields}
+            init_vals.update(zip((nm for nm, ctype in ctype.fields), args))
+            init_vals.update(argv)
+            self.val = init_vals
 
     def __repr__(self):
         if self.initialized:
-            return '{}({})'.format(type(self).__name__, ', '.join(
+            return '{}({})'.format(self.ctype.name, ', '.join(
                 nm+'='+repr(getattr(self, nm) if isinstance(getattr(self, nm), StructCObj) else getattr(self, nm).val)
                 for nm, ctype in self.ctype.fields))
         else:
-            return '{}()'.format(type(self).__name__)
+            return '{}()'.format(self.ctype.name)
 
     @property
     def initialized(self):
         return all(getattr(self, fname).initialized
                    for fname, ftype in self.ctype.fields)
+
+    def get_val(self):
+        if self.initialized:
+            return {fname: getattr(self, fname).val
+                    for fname, ftype in self.ctype.fields}
+        else:
+            raise VarAccessError('struct is not initialized')
+
+    def set_val(self, new_value):
+        if isinstance(new_value, StructCObj):
+            if new_value.ctype != self.ctype:
+                    raise TypeError('expected mapping {!r} but got {!r}'
+                                    .format(self.ctype, new_value.ctype))
+            for fname, _ in self.ctype.fields:
+                getattr(self, fname).val = getattr(new_value, fname)
+        elif isinstance(new_value, collections.Mapping):
+            if len(new_value) != len(self.ctype.fields):
+                raise TypeError('number of entries in dict is not matching '
+                                'number of required fields')
+            for fname, ftype in self.ctype.fields:
+                try:
+                    fval = new_value[fname]
+                except KeyError:
+                    raise TypeError('struct has no field names {!r}'
+                                    .format(fname))
+                getattr(self, fname).val = fval
+        elif isinstance(new_value, collections.Iterable):
+            new_value = tuple(new_value)
+            if len(new_value) != len(self.ctype.fields):
+                raise TypeError('number of entries in tuple is not matching '
+                                'number of required fields')
+            for (fname, _), fval in zip(self.ctype.fields, new_value):
+                getattr(self, fname).val = fval
+        else:
+            raise TypeError('The expected mapping, sequence or {!r} but got '
+                            '{!r}'.format(self.ctype, type(new_value)))
+
+    def __len__(self):
+        return len(self.ctype.fields)
+
+    def __getitem__(self, item):
+        if isinstance(item, slice):
+            return tuple(getattr(self, fname)
+                         for fname, ftype in self.ctype.fields[item])
+        else:
+            field_name, field_type = self.ctype.fields[item]
+            return getattr(self, field_name)
+
+    val = property(get_val, set_val)
 
 
 class StructCType(CType):
@@ -233,6 +293,11 @@ class StructCType(CType):
     def __init__(self, name, fields):
         super(StructCType, self).__init__(name)
         self.fields = fields
+
+    def create_zero_cobj(self, adr_space=None):
+        init_vals = {fname: ftype.create_zero_cobj(adr_space)
+                     for fname, ftype in self.fields}
+        return self(adr_space, **init_vals)
 
 
 class CProgram(object):
