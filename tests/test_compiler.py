@@ -212,6 +212,10 @@ def test_structDef_returnCStructObj():
     assert isinstance(struct_s.base_ctype, StructCType)
     assert struct_s.name == 'struct_s'
 
+def test_structDef_onDifferentTypeName():
+    prog = compile_ccode('struct other_name { };')
+    assert prog.struct_other_name.name == 'struct_other_name'
+
 def test_structDef_withFields_setsFieldDefInPyClass():
     prog = compile_ccode("""
         struct s {
@@ -229,6 +233,18 @@ def test_structDef_withVarDecl_addsVarDeclToGlobal():
         } s;
     """)
     assert prog.s.a.ctype == CProgram.int
+
+def test_structDef_withNestedStruct():
+    prog = compile_ccode("""
+        struct s {
+            struct nested_t {
+                int a;
+            } nested;
+            int b;
+        };
+    """)
+    assert prog.struct_s.fields == \
+           [('nested', prog.struct_nested_t.base_ctype), ('b', CProgram.int)]
 
 def test_structAttr_inAssignmentDest_changesField():
     prog = compile_ccode("""
@@ -255,8 +271,6 @@ def test_structAttr_inAssignmentSrc_readsField():
     """)
     prog.func()
     assert prog.outp == 10
-
-### test support of nested structs
 
 ### test source line map of struct definition (var defs in different lines!!!)
 

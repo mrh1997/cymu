@@ -252,19 +252,31 @@ def astconv_func_decl(func_decl_astc, local_names, prefix_stmts):
 
 @with_src_location()
 def astconv_struct_decl(struct_decl_astc, local_names, prefix_stmts):
-    fields = [
-        ast.Tuple(
-            elts=[
-                ast.Str(s=fld_def_astc.spelling),
-                attr('datamodel', 'CProgram',TYPE_MAP[fld_def_astc.type.kind])],
-            ctx=ast.Load())
-        for fld_def_astc in struct_decl_astc.get_children()]
+    field_astpy_list = []
+    for decl_astc in struct_decl_astc.get_children():
+        if decl_astc.kind.name == 'FIELD_DECL':
+            type_name = decl_astc.type.spelling
+            if type_name.startswith('struct '):
+                type_astpy = attr(type_name.replace(' ', '_'))
+            else:
+                type_astpy = attr('datamodel', 'CProgram',
+                                  TYPE_MAP[decl_astc.type.kind])
+            field_astpy_list.append(
+                ast.Tuple(
+                    elts=[ast.Str(s=decl_astc.spelling), type_astpy],
+                    ctx=ast.Load()))
+        elif decl_astc.kind.name == 'STRUCT_DECL':
+            substruct_astpy = astconv_struct_decl(
+                decl_astc, local_names, prefix_stmts)
+            prefix_stmts.append(substruct_astpy)
+
+    struct_name = 'struct_' + struct_decl_astc.spelling
     return ast.Assign(
-        targets=[ast.Name(id='struct_s', ctx=ast.Store())],
+        targets=[ast.Name(id=struct_name, ctx=ast.Store())],
         value=ast.Call(
             func=attr('datamodel', 'StructCType'),
-            args=[ast.Str(s='struct_s'),
-                  ast.List(elts=fields, ctx=ast.Load())],
+            args=[ast.Str(s=struct_name),
+                  ast.List(elts=field_astpy_list, ctx=ast.Load())],
             keywords=[],
             starargs=None,
             kwargs=None))
