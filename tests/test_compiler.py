@@ -56,6 +56,10 @@ def test_varDecl_inGlobalScopeWithInitialization_setsInitialValueOfVar():
     prog = compile_ccode('int outp = 10;')
     assert prog.outp.val == 10
 
+def test_varDecl_inGlobalScopeWithInitializationWithBrackets_setsInitialValueOfVar():
+    prog = compile_ccode('int outp = { 10 };')
+    assert prog.outp.val == 10
+
 def test_emptyStmt_ok():
     run_ccode(';')
 
@@ -234,6 +238,15 @@ def test_structDef_withVarDecl_addsVarDeclToGlobal():
     """)
     assert prog.s.a.ctype == CProgram.int
 
+def test_structDef_withVarDeclByReference_addsVarDeclToGlobal():
+    prog = compile_ccode("""
+        struct s {
+            int a;
+        } ;
+        struct s s;
+    """)
+    assert prog.s.a.ctype == CProgram.int
+
 def test_structDef_withNestedStruct():
     prog = compile_ccode("""
         struct s {
@@ -272,10 +285,28 @@ def test_structAttr_inAssignmentSrc_readsField():
     prog.func()
     assert prog.outp == 10
 
+def test_structInitialization():
+    prog = compile_ccode("""
+        struct s {
+            int a;
+            char b;
+        } s = { 1, 2 };
+    """)
+    assert prog.s.a == 1
+    assert prog.s.b == 2
+
+def test_structInitialization_onNestedStructs():
+    prog = compile_ccode("""
+        struct s {
+            struct nested_t {
+                int a;
+            } nested;
+            int b;
+        } s = { { 1 }, 2 };
+    """)
+    assert prog.s.nested.a == 1
+    assert prog.s.b == 2
+
+### implement support for unnamed structs
+
 ### test source line map of struct definition (var defs in different lines!!!)
-
-### test support for struct initialization
-
-### test support for nested struct initialization
-
-### test compare with "assert short(-1) > long(100)"

@@ -172,6 +172,11 @@ class TestIntCObj(object):
         assert as_cint(min - 1) == max
         assert as_cint((max + 1) * 4 + 123) == 123
 
+    def test_setVal_onTupleOfSingleIntElement_ok(self, bound_int):
+        cint = bound_int()
+        cint.val = (((1),),),
+        assert cint.val == 1
+
     def test_initialized_onInitializedCObj_returnsTrue(self, bound_int):
         assert bound_int(11).initialized
 

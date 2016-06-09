@@ -102,6 +102,9 @@ class IntCObj(CObj):
             py_obj = new_value.__val
         elif isinstance(new_value, (int, long)):
             py_obj = new_value
+        elif isinstance(new_value, tuple) and len(new_value) == 1:
+            self.val = new_value[0]
+            return
         else:
             raise TypeError(
                 '{!r} cannot be converted to object of class {!r}'

@@ -119,6 +119,12 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
     elif expr_astc.kind.name == 'MEMBER_REF_EXPR':
         struct_astpy = astconv_expr(children[0], local_names, prefix_stmts)
         return attr(struct_astpy, expr_astc.spelling)
+    elif expr_astc.kind.name == 'INIT_LIST_EXPR':
+        # only valid for initializing lists/struct variables
+        return ast.Tuple(
+                elts=[astconv_expr(child, local_names, prefix_stmts)
+                      for child in children],
+                ctx=ast.Load())
     else:
         raise CompileError('Unsupportet Expression {!r}'
                             .format(expr_astc.kind.name))
@@ -129,14 +135,17 @@ def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
     if var_decl_astc.type.spelling.startswith('struct '):
         c_struct_name = var_decl_astc.type.spelling.replace(' ', '_')
         type_astpy = attr('__globals__', c_struct_name)
-        assert len(init_val_list) == 1
-        args = []
+        del init_val_list[0]
     else:
         type_astpy = attr('__globals__', TYPE_MAP[var_decl_astc.type.kind])
-        if len(init_val_list) == 1:
-            args = [astconv_expr(init_val_list[0], local_names, prefix_stmts)]
+    if len(init_val_list) == 0:
+        args = []
+    else:
+        arg = astconv_expr(init_val_list[0], local_names, prefix_stmts)
+        if isinstance(arg, ast.Tuple):
+            args = arg.elts
         else:
-            args = []
+            args = [arg]
     if local_names is None:
         target = attr('__globals__', var_decl_astc.spelling)
     else:
