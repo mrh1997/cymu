@@ -44,6 +44,19 @@ class BoundCType(object):
     def __getattr__(self, item):
         return getattr(self.base_ctype, item)
 
+    def __eq__(self, other):
+        if isinstance(other, CType):
+            return self.base_ctype == other
+        elif isinstance(other, BoundCType):
+            if self.base_ctype != other.base_ctype: return False
+            if self.adr_space != other.adr_space: return False
+            return True
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self == other
+
 
 class CType(object):
 
@@ -73,6 +86,16 @@ class CType(object):
 
     def create_zero_cobj(self, adr_space=None):
         raise NotImplementedError()
+
+    def __eq__(self, other):
+        if isinstance(other, BoundCType): return other == self
+        elif not isinstance(other, CType): return False
+        elif self.COBJ_TYPE is not other.COBJ_TYPE: return False
+        elif self.name != other.name: return False
+        else: return True
+
+    def __ne__(self, other):
+        return not self == other
 
 
 class IntCObj(CObj):

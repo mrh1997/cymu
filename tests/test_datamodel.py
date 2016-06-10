@@ -4,9 +4,24 @@ from cymu.datamodel import CProgram, BoundCType, AddressSpace, VarAccessError, \
     CType, IntCObj, IntCType, StructCType, CObj
 
 
+class MyCType(CType):
+    
+    class COBJ_TYPE(CObj):
+        def __init__(self, ctype, adr_space, *args, **argv):
+            cobj = super(MyCType.COBJ_TYPE, self).__init__(
+                ctype, adr_space)
+            self.args = args
+            self.argv = argv
+
+
 @pytest.fixture
 def adr_space():
     return AddressSpace()
+
+
+@pytest.fixture
+def my_ctype():
+    return MyCType('my')
 
 
 @pytest.fixture()
@@ -16,22 +31,13 @@ def bound_int(adr_space):
 
 class TestBoundCType(object):
 
-    class MyCType(CType):
-        class COBJ_TYPE(CObj):
-            def __init__(self, ctype, adr_space, *args, **argv):
-                cobj = super(TestBoundCType.MyCType.COBJ_TYPE, self).__init__(
-                    ctype, adr_space)
-                self.args = args
-                self.argv = argv
-
     @pytest.fixture
-    def bound_ctype(self, adr_space):
-        ctype = self.MyCType('dummy')
-        return BoundCType(ctype, adr_space)
+    def bound_ctype(self, adr_space, my_ctype):
+        return BoundCType(my_ctype, adr_space)
 
     def test_call_returnsCObj(self, bound_ctype):
         cobj = bound_ctype()
-        assert isinstance(cobj, self.MyCType.COBJ_TYPE)
+        assert isinstance(cobj, MyCType.COBJ_TYPE)
 
     def test_call_setsAdrSpace(self, adr_space, bound_ctype):
         cobj = bound_ctype()
@@ -46,46 +52,64 @@ class TestBoundCType(object):
         assert cobj.argv == dict(arg1=1, arg2="2", arg3=3)
 
     def test_repr(self, bound_ctype):
-        assert repr(bound_ctype) == "<bound CType 'dummy'>"
+        assert repr(bound_ctype) == "<bound CType 'my'>"
 
     def test_getAttr_retursAttrOfCType(self, bound_ctype):
         assert bound_ctype.cast.__func__ is \
                bound_ctype.base_ctype.cast.__func__
 
+    def test_eqNe_withBoundCTypeOfSameAdrSpaceAndCType_returnTrue(self, adr_space, my_ctype):
+        bound_ctype1 = BoundCType(my_ctype, adr_space)
+        bound_ctype2 = BoundCType(my_ctype, adr_space)
+        assert bound_ctype1 == bound_ctype2
+        assert not bound_ctype1 != bound_ctype2
+
+    def test_eqNe_withBoundCTypeOfSameAdrSpaceAndDifferentCType_returnsFalse(self, adr_space, my_ctype):
+        bound_ctype1 = BoundCType(my_ctype, adr_space)
+        bound_ctype2 = BoundCType(MyCType('alternative'), adr_space)
+        assert bound_ctype1 != bound_ctype2
+        assert not bound_ctype1 == bound_ctype2
+
+    def test_eqNe_withBoundCTypeOfDifferentAdrSpaceAndSameCType_returnsFalse(self, adr_space, my_ctype):
+        bound_ctype1 = BoundCType(my_ctype, adr_space)
+        bound_ctype2 = BoundCType(my_ctype, AddressSpace())
+        assert bound_ctype1 != bound_ctype2
+        assert not bound_ctype1 == bound_ctype2
+
+    def test_eqNe_withCType_returnsTrue(self, adr_space, my_ctype, bound_ctype):
+        assert bound_ctype == my_ctype
+        assert my_ctype == bound_ctype
+        assert not bound_ctype != my_ctype
+        assert not my_ctype != bound_ctype
+
 
 class TestCType(object):
 
-    @pytest.fixture()
-    def implicit_cast(self):
-        return IntCType.create_implicit_caster(CProgram.int,
-                                               CProgram.unsigned_int)
-
-    def test_bind_returnsBoundCType(self, adr_space):
-        ctype = CProgram.int
-        bound_ctype = ctype.bind(adr_space)
+    def test_bind_returnsBoundCType(self, adr_space, my_ctype):
+        bound_ctype = my_ctype.bind(adr_space)
         assert isinstance(bound_ctype, BoundCType)
         assert bound_ctype.adr_space is adr_space
-        assert bound_ctype.base_ctype is ctype
+        assert bound_ctype.base_ctype is my_ctype
 
-    def test_repr(self):
-        assert repr(CProgram.int) == "<CType 'int'>"
+    def test_repr(self, my_ctype):
+        assert repr(my_ctype) == "<CType 'my'>"
 
-    def test_implicitCast_onDifferentSigns_returnsUnsignedCObjs(self, implicit_cast, adr_space):
-        signed_int1 = CProgram.int(adr_space, 1)
-        signed_int2 = CProgram.int(adr_space, 2)
-        unsigned_int3 = CProgram.unsigned_int(adr_space, 3)
-        assert implicit_cast(signed_int1, signed_int2, unsigned_int3) == [
-            CProgram.unsigned_int(adr_space, 1),
-            CProgram.unsigned_int(adr_space, 2),
-            CProgram.unsigned_int(adr_space, 3) ]
+    def test_eqNe_onSameCObjTypeAndSameName_isTrue(self, my_ctype):
+        assert my_ctype == MyCType('my')
+        assert not my_ctype != MyCType('my')
 
-    def test_implicitCast_onPyInt_returnsSignedCObj(self, implicit_cast, adr_space):
-        assert implicit_cast(1) == [CProgram.unsigned_int(adr_space, 1)]
+    def test_eqNe_onSameCObjTypeAndDifferentName_isFalse(self, my_ctype):
+        assert my_ctype != MyCType('othername')
+        assert not my_ctype == MyCType('othernamey')
 
-    def test_createZeroCObj_returnIntWithValIs0(self, adr_space):
-        zero_cobj = CProgram.int.create_zero_cobj()
-        assert zero_cobj.ctype == CProgram.int
-        assert zero_cobj.val == 0
+    def test_eqNe_onDifferentCObjTypeAndSameName_isFalse(self, my_ctype):
+        class OtherCType(CType):
+            class COBJ_TYPE(CObj):
+                def __init__(self, ctype, adr_space):
+                    super(OtherCType.COBJ_TYPE, self).__init__(
+                        ctype, adr_space)
+        assert my_ctype != OtherCType('my')
+        assert not my_ctype == OtherCType('my')
 
 
 class TestIntCObj(object):
@@ -322,6 +346,31 @@ class TestIntCObj(object):
         cobj = ctype(adr_space, 0)
         cobj -= (max + 1) * 4
         assert int(cobj) == 0
+
+
+class TestIntCType(object):
+
+    @pytest.fixture()
+    def implicit_cast(self):
+        return IntCType.create_implicit_caster(CProgram.int,
+                                               CProgram.unsigned_int)
+
+    def test_implicitCast_onDifferentSigns_returnsUnsignedCObjs(self, implicit_cast, adr_space):
+        signed_int1 = CProgram.int(adr_space, 1)
+        signed_int2 = CProgram.int(adr_space, 2)
+        unsigned_int3 = CProgram.unsigned_int(adr_space, 3)
+        assert implicit_cast(signed_int1, signed_int2, unsigned_int3) == [
+            CProgram.unsigned_int(adr_space, 1),
+            CProgram.unsigned_int(adr_space, 2),
+            CProgram.unsigned_int(adr_space, 3) ]
+
+    def test_implicitCast_onPyInt_returnsSignedCObj(self, implicit_cast, adr_space):
+        assert implicit_cast(1) == [CProgram.unsigned_int(adr_space, 1)]
+
+    def test_createZeroCObj_returnIntWithValIs0(self, adr_space):
+        zero_cobj = CProgram.int.create_zero_cobj()
+        assert zero_cobj.ctype == CProgram.int
+        assert zero_cobj.val == 0
 
 
 @pytest.fixture
