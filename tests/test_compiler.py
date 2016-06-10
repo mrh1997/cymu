@@ -210,6 +210,21 @@ def test_funcDecl_withWhileStmtWithPrefixStmt_hasNoSourceLineNoReferenceForCompa
         }""")
     assert get_linenos(prog.func) == [3, 4, 6, 8]
 
+def test_returnStmt_withExpr_returnsExprAsResult():
+    prog = compile_ccode('int f() { return 3; }')
+    assert prog.f().ctype == prog.int
+    assert prog.f() == 3
+
+def test_returnStmt_withNonIntFunc_returnsNonCIntAsResult():
+    prog = compile_ccode('char f() { return 9; }')
+    assert prog.f().ctype == prog.char
+    assert prog.f() == 9
+
+def test_returnStmt_withDifferentTypeThanFunc_castsToCorrectType():
+    prog = compile_ccode('int f() { char x = 3; return x; }')
+    assert prog.f().ctype == prog.int
+    assert prog.f() == 3
+
 def test_structDef_returnCStructObj():
     prog = compile_ccode('struct s { };')
     struct_s = prog.struct_s

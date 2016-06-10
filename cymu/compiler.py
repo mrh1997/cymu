@@ -78,6 +78,14 @@ def attr(obj, *nested_attrnames):
             ctx=ast.Load())
     return expr_astpy
 
+def call(obj, *args):
+    return ast.Call(
+        func=obj,
+        args=list(args),
+        keywords=[],
+        starargs=None,
+        kwargs=None)
+
 def astconv_expr(expr_astc, local_names, prefix_stmts):
     children = list(expr_astc.get_children())
     if expr_astc.kind.name in ('BINARY_OPERATOR', 'COMPOUND_ASSIGNMENT_OPERATOR'):
@@ -102,12 +110,7 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
     elif expr_astc.kind.name == 'INTEGER_LITERAL':
         int_tok_astc = expr_astc.get_tokens().next()
         int_astpy = ast.Num(n=int(int_tok_astc.spelling))
-        return ast.Call(
-            func=attr('__globals__', 'int'),
-            args=[int_astpy],
-            keywords=[],
-            starargs=None,
-            kwargs=None)
+        return call(attr('__globals__', 'int'), int_astpy)
     elif expr_astc.kind.name == 'UNEXPOSED_EXPR':
         [sub_astc] = children
         return astconv_expr(sub_astc, local_names, prefix_stmts)
@@ -154,12 +157,7 @@ def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
     target.ctx = ast.Store()
     return ast.Assign(
         targets=[target],
-        value=ast.Call(
-            func=type_astpy,
-            args=args,
-            keywords=[],
-            starargs=None,
-            kwargs=None))
+        value=call(type_astpy, *args))
 
 def astconv_compound_stmt(comp_stmt_astc, local_names, prefix_stmts):
     for stmt_astc in comp_stmt_astc.get_children():
@@ -215,6 +213,18 @@ def astconv_dowhile_stmt(dowhile_stmt_astc, local_names, prefix_stmts):
         orelse=[])
 
 @with_src_location()
+def astconv_return_stmt(return_stmt_astc, local_names, prefix_stmts):
+    children = list(return_stmt_astc.get_children())
+    if len(children) == 0:
+        result_astpy = ast.None
+    else:
+        type_name = TYPE_MAP[func_result_type.kind]
+        result_astpy = call(
+            attr('__globals__', type_name, 'cast'),
+            astconv_expr(children[0], local_names, prefix_stmts))
+    return ast.Return(value=result_astpy)
+
+@with_src_location()
 def astconv_expr_as_stmt(stmt_astc, local_names, prefix_stmts):
     astconv_expr(stmt_astc, local_names, prefix_stmts)
     return ast.Pass()
@@ -230,6 +240,8 @@ def astconv_stmt(stmt_astc, local_names, prefix_stmts):
         return astconv_dowhile_stmt(stmt_astc, local_names, prefix_stmts)
     elif stmt_astc.kind.name == 'COMPOUND_STMT':
         return astconv_compound_stmt(stmt_astc, local_names, prefix_stmts)
+    elif stmt_astc.kind.name == 'RETURN_STMT':
+        return astconv_return_stmt(stmt_astc, local_names, prefix_stmts)
     else:
         return astconv_expr_as_stmt(stmt_astc, local_names, prefix_stmts)
 
@@ -245,12 +257,14 @@ def to_stmt_list(stmt_astc, local_names):
 
 @with_src_location()
 def astconv_func_decl(func_decl_astc, local_names, prefix_stmts):
+    global func_result_type    ### remove global and replace by ctx
+    func_result_type = func_decl_astc.result_type
     children = list(func_decl_astc.get_children())
     if len(children) == 1:
         return ast.FunctionDef(
             name=func_decl_astc.spelling,
             decorator_list=[],
-            args=ast.arguments(args=[ast.Name(id='__globals__', ctx=ast.Param())],
+    args=ast.arguments(args=[ast.Name(id='__globals__', ctx=ast.Param())],
                                vararg=None,
                                kwarg=None,
                                defaults=[]),
@@ -282,13 +296,9 @@ def astconv_struct_decl(struct_decl_astc, local_names, prefix_stmts):
     struct_name = 'struct_' + struct_decl_astc.spelling
     return ast.Assign(
         targets=[ast.Name(id=struct_name, ctx=ast.Store())],
-        value=ast.Call(
-            func=attr('datamodel', 'StructCType'),
-            args=[ast.Str(s=struct_name),
-                  ast.List(elts=field_astpy_list, ctx=ast.Load())],
-            keywords=[],
-            starargs=None,
-            kwargs=None))
+        value=call(attr('datamodel', 'StructCType'),
+                   ast.Str(s=struct_name),
+                   ast.List(elts=field_astpy_list, ctx=ast.Load())))
 
 def astconv_decl(decl_astc, local_names, prefix_stmts):
     if decl_astc.kind.name == 'VAR_DECL':
