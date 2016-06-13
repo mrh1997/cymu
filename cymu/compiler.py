@@ -265,20 +265,38 @@ def to_stmt_list(stmt_astc, ctx):
     return stmt_list
 
 @with_src_location()
+def astconv_func_param(param_astc, ctx, prefix_stmts):
+    return ast.Assign(
+        targets=[ast.Name(id=param_astc.spelling, ctx=ast.Store())],
+        value=call(attr('__globals__', TYPE_MAP[param_astc.type.kind]),
+                   attr(param_astc.spelling)))
+
+@with_src_location()
 def astconv_func_decl(func_decl_astc, ctx, prefix_stmts):
     children = list(func_decl_astc.get_children())
-    if len(children) == 1:
-        ctx.local_names = set()
+    if any(c.kind.name == 'COMPOUND_STMT' for c in children):
+        x = func_decl_astc.get_arguments()
+        ctx.local_names = { param_astc.spelling
+                            for param_astc in func_decl_astc.get_arguments() }
         ctx.func_result_type = func_decl_astc.result_type
+        params_astpy = \
+            [ast.Name(id='__globals__', ctx=ast.Param())] + \
+            [ast.Name(id=param_astc.spelling, ctx=ast.Param())
+             for param_astc in func_decl_astc.get_arguments()]
+        vararg_astpy = (None if func_decl_astc.type.spelling.endswith('(void)')
+                        else '_')
+        casted_param_astpy = [
+            astconv_func_param(param_astc, ctx, prefix_stmts)
+            for param_astc in func_decl_astc.get_arguments()]
         func_astpy = ast.FunctionDef(
             name=func_decl_astc.spelling,
             decorator_list=[],
-            args=ast.arguments(args=[ast.Name(id='__globals__',
-                                              ctx=ast.Param())],
-                               vararg=None,
+            args=ast.arguments(args=params_astpy,
+                               vararg=vararg_astpy,
                                kwarg=None,
                                defaults=[]),
-            body=to_stmt_list(children[0], ctx=ctx) +
+            body=casted_param_astpy +
+                 to_stmt_list(children[-1], ctx=ctx) +
                  [src_location_end_marker(func_decl_astc)])
         del ctx.local_names
         del ctx.func_result_type

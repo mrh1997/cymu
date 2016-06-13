@@ -210,6 +210,52 @@ def test_funcDecl_withWhileStmtWithPrefixStmt_hasNoSourceLineNoReferenceForCompa
         }""")
     assert get_linenos(prog.func) == [3, 4, 6, 8]
 
+def test_funcDecl_withParamAndNoParamPassed_raisesTypeError():
+    prog = compile_ccode('void f(int p) { }')
+    with pytest.raises(TypeError):
+        prog.f()
+
+def test_funcDecl_withParam_canAccessParam():
+    prog = compile_ccode(
+        'int outp;\n'
+        'void f(int p) { outp = p; }\n')
+    prog.f(1234)
+    assert prog.outp == 1234
+
+def test_funcDecl_withParamModifiedInBody_doesNotChangeCallersValue():
+    prog = compile_ccode(
+        'int outp;\n'
+        'void f(int p) { p = 2; outp = p; }\n')
+    inp = prog.int(1)
+    prog.f(inp)
+    assert inp == 1
+    assert prog.outp == 2
+
+def test_funcDecl_onParamOfWrongType_willCastParam():
+    prog = compile_ccode(
+        'int outp;\n'
+        'void f(unsigned char p) { outp = p; }\n')
+    prog.f(-1)
+    assert prog.outp == 0xFF
+
+def test_funcDecl_onMultipleParams_passedInCorrectOrder():
+    prog = compile_ccode(
+        'int outp1, outp2;\n'
+        'void f(int p1, int p2) { outp1 = p1; outp2 = p2; }\n')
+    prog.f(11, 22)
+    assert prog.outp1 == 11
+    assert prog.outp2 == 22
+
+def test_funcDecl_onVoidParamListAndParamPassed_raisesTypeError():
+    prog = compile_ccode('void f(void) { }\n')
+    with pytest.raises(TypeError):
+        prog.f(1)
+
+def test_funcDecl_onEmptyParamListAndParamsPassed_ok():
+    prog = compile_ccode('void f() { }\n')
+    prog.f(1)
+    prog.f(1, 2)
+
 def test_returnStmt_withExpr_returnsExprAsResult():
     prog = compile_ccode('int f() { return 3; }')
     assert prog.f().ctype == prog.int
