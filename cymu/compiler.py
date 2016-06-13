@@ -8,6 +8,7 @@ import clang.cindex
 # It prints the python AST of compiled C-code
 PRINT_PYAST = False
 
+
 TYPE_MAP = {
     clang.cindex.TypeKind.CHAR_S: 'char',
     clang.cindex.TypeKind.UCHAR: 'unsigned_char',
@@ -21,6 +22,13 @@ TYPE_MAP = {
 
 class CompileError(Exception):
     pass
+
+
+class CompileContext(dict):
+
+    def __getattr__(self, name):
+        return self.get(name)
+
 
 def config_clang():
     prj_dir = os.path.dirname(os.path.dirname(__file__))
@@ -36,8 +44,8 @@ def with_src_location():
     """
     def decorator(astconv_func):
         @functools.wraps(astconv_func)
-        def astconv_wrapper(astc, local_names, prefix_stmts):
-            pyast = astconv_func(astc, local_names, prefix_stmts)
+        def astconv_wrapper(astc, ctx, prefix_stmts):
+            pyast = astconv_func(astc, ctx, prefix_stmts)
             pyast.lineno = astc.location.line
             pyast.col_offset = astc.location.column - 1
             return pyast
@@ -86,11 +94,11 @@ def call(obj, *args):
         starargs=None,
         kwargs=None)
 
-def astconv_expr(expr_astc, local_names, prefix_stmts):
+def astconv_expr(expr_astc, ctx, prefix_stmts):
     children = list(expr_astc.get_children())
     if expr_astc.kind.name in ('BINARY_OPERATOR', 'COMPOUND_ASSIGNMENT_OPERATOR'):
         decl_ref_astc, val_astc = children
-        lvalue_astpy = astconv_expr(decl_ref_astc, local_names, prefix_stmts)
+        lvalue_astpy = astconv_expr(decl_ref_astc, ctx, prefix_stmts)
         lval_val_astpy = ast.Attribute(
             value=lvalue_astpy,
             attr='val',
@@ -99,13 +107,13 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
             assert expr_astc.operator_kind.name == 'ASSIGN'
             prefix_stmts.append(ast.Assign(
                 targets=[lval_val_astpy],
-                value=astconv_expr(val_astc, local_names, prefix_stmts)))
+                value=astconv_expr(val_astc, ctx, prefix_stmts)))
         else:
             assert expr_astc.operator_kind.name == 'SUB_ASSIGN'
             prefix_stmts.append(ast.AugAssign(
                 target=lval_val_astpy,
                 op=ast.Sub(),
-                value=astconv_expr(val_astc, local_names, prefix_stmts)))
+                value=astconv_expr(val_astc, ctx, prefix_stmts)))
         return lvalue_astpy
     elif expr_astc.kind.name == 'INTEGER_LITERAL':
         int_tok_astc = expr_astc.get_tokens().next()
@@ -113,19 +121,20 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
         return call(attr('__globals__', 'int'), int_astpy)
     elif expr_astc.kind.name == 'UNEXPOSED_EXPR':
         [sub_astc] = children
-        return astconv_expr(sub_astc, local_names, prefix_stmts)
+        return astconv_expr(sub_astc, ctx, prefix_stmts)
     elif expr_astc.kind.name == 'DECL_REF_EXPR':
-        if local_names is not None and expr_astc.spelling in local_names:
+        if ctx.local_names is not None and \
+                        expr_astc.spelling in ctx.local_names:
             return attr(expr_astc.spelling)
         else:
             return attr('__globals__', expr_astc.spelling)
     elif expr_astc.kind.name == 'MEMBER_REF_EXPR':
-        struct_astpy = astconv_expr(children[0], local_names, prefix_stmts)
+        struct_astpy = astconv_expr(children[0], ctx, prefix_stmts)
         return attr(struct_astpy, expr_astc.spelling)
     elif expr_astc.kind.name == 'INIT_LIST_EXPR':
         # only valid for initializing lists/struct variables
         return ast.Tuple(
-                elts=[astconv_expr(child, local_names, prefix_stmts)
+                elts=[astconv_expr(child, ctx, prefix_stmts)
                       for child in children],
                 ctx=ast.Load())
     else:
@@ -133,7 +142,7 @@ def astconv_expr(expr_astc, local_names, prefix_stmts):
                             .format(expr_astc.kind.name))
 
 @with_src_location()
-def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
+def astconv_var_decl(var_decl_astc, ctx, prefix_stmts):
     init_val_list = list(var_decl_astc.get_children())
     if var_decl_astc.type.spelling.startswith('struct '):
         c_struct_name = var_decl_astc.type.spelling.replace(' ', '_')
@@ -144,110 +153,110 @@ def astconv_var_decl(var_decl_astc, local_names, prefix_stmts):
     if len(init_val_list) == 0:
         args = []
     else:
-        arg = astconv_expr(init_val_list[0], local_names, prefix_stmts)
+        arg = astconv_expr(init_val_list[0], ctx, prefix_stmts)
         if isinstance(arg, ast.Tuple):
             args = arg.elts
         else:
             args = [arg]
-    if local_names is None:
+    if ctx.local_names is None:
         target = attr('__globals__', var_decl_astc.spelling)
     else:
         target = attr(var_decl_astc.spelling)
-        local_names.add(var_decl_astc.spelling)
+        ctx.local_names.add(var_decl_astc.spelling)
     target.ctx = ast.Store()
     return ast.Assign(
         targets=[target],
         value=call(type_astpy, *args))
 
-def astconv_compound_stmt(comp_stmt_astc, local_names, prefix_stmts):
+def astconv_compound_stmt(comp_stmt_astc, ctx, prefix_stmts):
     for stmt_astc in comp_stmt_astc.get_children():
         if stmt_astc.kind.name == 'DECL_STMT':
             [child_astc] = stmt_astc.get_children()
-            stmt_astpy = astconv_var_decl(child_astc, local_names, prefix_stmts)
+            stmt_astpy = astconv_var_decl(child_astc, ctx, prefix_stmts)
         else:
-            stmt_astpy = astconv_stmt(stmt_astc, local_names, prefix_stmts)
+            stmt_astpy = astconv_stmt(stmt_astc, ctx, prefix_stmts)
         prefix_stmts.append(stmt_astpy)
     return ast.Pass()
 
 @with_src_location()
-def astconv_if_stmt(if_stmt_astc, local_names, prefix_stmts):
+def astconv_if_stmt(if_stmt_astc, ctx, prefix_stmts):
     children = list(if_stmt_astc.get_children())
     return ast.If(
-        test=astconv_expr(children[0], local_names, prefix_stmts),
-        body=to_stmt_list(children[1], local_names),
+        test=astconv_expr(children[0], ctx, prefix_stmts),
+        body=to_stmt_list(children[1], ctx),
         orelse=([] if len(children) != 3
-                else to_stmt_list(children[2], local_names)))
+                else to_stmt_list(children[2], ctx)))
 
 @with_src_location()
-def astconv_while_stmt(while_stmt_astc, local_names, prefix_stmts):
+def astconv_while_stmt(while_stmt_astc, ctx, prefix_stmts):
     [exit_cond_astc, body_astc] = while_stmt_astc.get_children()
     exit_check_prefix_stmts = []
     exit_check_astpy = ast.If(
         test=ast.UnaryOp(
             op=ast.Not(),
-            operand=astconv_expr(exit_cond_astc, local_names,
+            operand=astconv_expr(exit_cond_astc, ctx,
                                  exit_check_prefix_stmts)),
         body=[ast.Break()],
         orelse=[])
     return ast.While(
         test=ast.Name(id='True', ctx=ast.Load()),
         body=exit_check_prefix_stmts + [exit_check_astpy] +
-             to_stmt_list(body_astc, local_names),
+             to_stmt_list(body_astc, ctx),
         orelse=[])
 
 @with_src_location()
-def astconv_dowhile_stmt(dowhile_stmt_astc, local_names, prefix_stmts):
+def astconv_dowhile_stmt(dowhile_stmt_astc, ctx, prefix_stmts):
     [body_astc, exit_cond_astc] = dowhile_stmt_astc.get_children()
     exit_check_prefix_stmts = []
     exit_check_astpy = ast.If(
         test=ast.UnaryOp(
             op=ast.Not(),
-            operand=astconv_expr(exit_cond_astc, local_names,
+            operand=astconv_expr(exit_cond_astc, ctx,
                                  exit_check_prefix_stmts)),
         body=[ast.Break()],
         orelse=[])
     return ast.While(
         test=ast.Name(id='True', ctx=ast.Load()),
-        body=to_stmt_list(body_astc, local_names) +
+        body=to_stmt_list(body_astc, ctx) +
              exit_check_prefix_stmts + [exit_check_astpy],
         orelse=[])
 
 @with_src_location()
-def astconv_return_stmt(return_stmt_astc, local_names, prefix_stmts):
+def astconv_return_stmt(return_stmt_astc, ctx, prefix_stmts):
     children = list(return_stmt_astc.get_children())
     if len(children) == 0:
         result_astpy = ast.None
     else:
-        type_name = TYPE_MAP[func_result_type.kind]
+        type_name = TYPE_MAP[ctx.func_result_type.kind]
         result_astpy = call(
             attr('__globals__', type_name, 'cast'),
-            astconv_expr(children[0], local_names, prefix_stmts))
+            astconv_expr(children[0], ctx, prefix_stmts))
     return ast.Return(value=result_astpy)
 
 @with_src_location()
-def astconv_expr_as_stmt(stmt_astc, local_names, prefix_stmts):
-    astconv_expr(stmt_astc, local_names, prefix_stmts)
+def astconv_expr_as_stmt(stmt_astc, ctx, prefix_stmts):
+    astconv_expr(stmt_astc, ctx, prefix_stmts)
     return ast.Pass()
 
-def astconv_stmt(stmt_astc, local_names, prefix_stmts):
+def astconv_stmt(stmt_astc, ctx, prefix_stmts):
     if stmt_astc.kind.name == 'IF_STMT':
-        return astconv_if_stmt(stmt_astc, local_names, prefix_stmts)
+        return astconv_if_stmt(stmt_astc, ctx, prefix_stmts)
     elif stmt_astc.kind.name == 'NULL_STMT':
         return ast.Pass()
     elif stmt_astc.kind.name == 'WHILE_STMT':
-        return astconv_while_stmt(stmt_astc, local_names, prefix_stmts)
+        return astconv_while_stmt(stmt_astc, ctx, prefix_stmts)
     elif stmt_astc.kind.name == 'DO_STMT':
-        return astconv_dowhile_stmt(stmt_astc, local_names, prefix_stmts)
+        return astconv_dowhile_stmt(stmt_astc, ctx, prefix_stmts)
     elif stmt_astc.kind.name == 'COMPOUND_STMT':
-        return astconv_compound_stmt(stmt_astc, local_names, prefix_stmts)
+        return astconv_compound_stmt(stmt_astc, ctx, prefix_stmts)
     elif stmt_astc.kind.name == 'RETURN_STMT':
-        return astconv_return_stmt(stmt_astc, local_names, prefix_stmts)
+        return astconv_return_stmt(stmt_astc, ctx, prefix_stmts)
     else:
-        return astconv_expr_as_stmt(stmt_astc, local_names, prefix_stmts)
+        return astconv_expr_as_stmt(stmt_astc, ctx, prefix_stmts)
 
-def to_stmt_list(stmt_astc, local_names):
+def to_stmt_list(stmt_astc, ctx):
     stmt_list = []
-    stmt_astpy = astconv_stmt(stmt_astc, local_names, prefix_stmts=stmt_list)
+    stmt_astpy = astconv_stmt(stmt_astc, ctx, prefix_stmts=stmt_list)
     if not isinstance(stmt_astpy, ast.Pass) or \
             hasattr(stmt_astpy, 'lineno') or \
             len(stmt_list) == 0:
@@ -256,25 +265,29 @@ def to_stmt_list(stmt_astc, local_names):
     return stmt_list
 
 @with_src_location()
-def astconv_func_decl(func_decl_astc, local_names, prefix_stmts):
-    global func_result_type    ### remove global and replace by ctx
-    func_result_type = func_decl_astc.result_type
+def astconv_func_decl(func_decl_astc, ctx, prefix_stmts):
     children = list(func_decl_astc.get_children())
     if len(children) == 1:
-        return ast.FunctionDef(
+        ctx.local_names = set()
+        ctx.func_result_type = func_decl_astc.result_type
+        func_astpy = ast.FunctionDef(
             name=func_decl_astc.spelling,
             decorator_list=[],
-    args=ast.arguments(args=[ast.Name(id='__globals__', ctx=ast.Param())],
+            args=ast.arguments(args=[ast.Name(id='__globals__',
+                                              ctx=ast.Param())],
                                vararg=None,
                                kwarg=None,
                                defaults=[]),
-            body=to_stmt_list(children[0], local_names=set()) +
+            body=to_stmt_list(children[0], ctx=ctx) +
                  [src_location_end_marker(func_decl_astc)])
+        del ctx.local_names
+        del ctx.func_result_type
+        return func_astpy
     else:
         return ast.Pass()
 
 @with_src_location()
-def astconv_struct_decl(struct_decl_astc, local_names, prefix_stmts):
+def astconv_struct_decl(struct_decl_astc, ctx, prefix_stmts):
     field_astpy_list = []
     for decl_astc in struct_decl_astc.get_children():
         if decl_astc.kind.name == 'FIELD_DECL':
@@ -290,7 +303,7 @@ def astconv_struct_decl(struct_decl_astc, local_names, prefix_stmts):
                     ctx=ast.Load()))
         elif decl_astc.kind.name == 'STRUCT_DECL':
             substruct_astpy = astconv_struct_decl(
-                decl_astc, local_names, prefix_stmts)
+                decl_astc, ctx, prefix_stmts)
             prefix_stmts.append(substruct_astpy)
 
     struct_name = 'struct_' + struct_decl_astc.spelling
@@ -300,18 +313,18 @@ def astconv_struct_decl(struct_decl_astc, local_names, prefix_stmts):
                    ast.Str(s=struct_name),
                    ast.List(elts=field_astpy_list, ctx=ast.Load())))
 
-def astconv_decl(decl_astc, local_names, prefix_stmts):
+def astconv_decl(decl_astc, ctx, prefix_stmts):
     if decl_astc.kind.name == 'VAR_DECL':
-        return astconv_var_decl(decl_astc, local_names, prefix_stmts)
+        return astconv_var_decl(decl_astc, ctx, prefix_stmts)
     elif decl_astc.kind.name == 'FUNCTION_DECL':
-        return astconv_func_decl(decl_astc, local_names, prefix_stmts)
+        return astconv_func_decl(decl_astc, ctx, prefix_stmts)
     elif decl_astc.kind.name == 'STRUCT_DECL':
-        return astconv_struct_decl(decl_astc, local_names, prefix_stmts)
+        return astconv_struct_decl(decl_astc, ctx, prefix_stmts)
     else:
         raise CompileError('Unsupportet Declaration {!r}'
                            .format(decl_astc.kind.name))
 
-def astconv_transunit(transunit):
+def get_ast_of_transunit(transunit):
     """
     Compile a clang.cindex.
 
@@ -321,9 +334,10 @@ def astconv_transunit(transunit):
     """
     non_var_decls_astpy = []
     var_decls_astpy = []
+    ctx = CompileContext()
     for decl_astc in transunit.cursor.get_children():
         prefix_stmts = []
-        decl_astpy = astconv_decl(decl_astc, None, prefix_stmts)
+        decl_astpy = astconv_decl(decl_astc, ctx, prefix_stmts)
         decls_astpy = (var_decls_astpy if decl_astc.kind.name == 'VAR_DECL'
                        else non_var_decls_astpy)
         decls_astpy += prefix_stmts
@@ -353,7 +367,7 @@ def astconv_transunit(transunit):
     return module_astpy
 
 def compile_transunit(transunit):
-    module_astpy = astconv_transunit(transunit)
+    module_astpy = get_ast_of_transunit(transunit)
     ast.fix_missing_locations(module_astpy)
     if PRINT_PYAST:
         import pyast_printer
