@@ -229,12 +229,14 @@ def astconv_dowhile_stmt(dowhile_stmt_astc, ctx, prefix_stmts):
 @with_src_location()
 def astconv_return_stmt(return_stmt_astc, ctx, prefix_stmts):
     children = list(return_stmt_astc.get_children())
-    if len(children) == 0:
-        result_astpy = ast.None
+    if ctx.func_result_type.kind.name == 'VOID':
+        assert len(children) == 0
+        result_astpy = None
     else:
+        assert len(children) == 1
         type_name = TYPE_MAP[ctx.func_result_type.kind]
         result_astpy = call(
-            attr('__globals__', type_name, 'cast'),
+            attr('__globals__', type_name),
             astconv_expr(children[0], ctx, prefix_stmts))
     return ast.Return(value=result_astpy)
 
@@ -297,6 +299,11 @@ def astconv_func_decl(func_decl_astc, ctx, prefix_stmts):
         casted_param_astpy = [
             astconv_func_param(param_astc, ctx, prefix_stmts)
             for param_astc in func_decl_astc.get_arguments()]
+        if ctx.func_result_type.kind.name == 'VOID':
+            casted_result_astpy = []
+        else:
+            casted_result_astpy = [ast.Return(value=call(
+                attr('__globals__', TYPE_MAP[ctx.func_result_type.kind])))]
         func_astpy = ast.FunctionDef(
             name=func_decl_astc.spelling,
             decorator_list=[],
@@ -306,6 +313,7 @@ def astconv_func_decl(func_decl_astc, ctx, prefix_stmts):
                                defaults=[]),
             body=casted_param_astpy +
                  to_stmt_list(children[-1], ctx=ctx) +
+                 casted_result_astpy +
                  [src_location_end_marker(func_decl_astc)])
         del ctx.local_names
         del ctx.func_result_type
@@ -393,7 +401,13 @@ def get_ast_of_transunit(transunit):
         class_def_astpy])
     return module_astpy
 
-def compile_transunit(transunit):
+def compile_transunit(transunit, ignore_warnings=False):
+    severity = (clang.cindex.Diagnostic.Error if ignore_warnings else
+                clang.cindex.Diagnostic.Warning)
+    for diag in transunit.diagnostics:
+        if diag.severity >= severity:
+            raise CompileError(diag.spelling )
+
     module_astpy = get_ast_of_transunit(transunit)
     ast.fix_missing_locations(module_astpy)
     if PRINT_PYAST:
@@ -404,18 +418,14 @@ def compile_transunit(transunit):
     exec module_pyc in module
     return module['CModule']
 
-def compile_str(c_code, filename='filename.c'):
+def compile_str(c_code, filename='filename.c', ignore_warnings=False):
     index = clang.cindex.Index.create()
     transunit = index.parse(filename, unsaved_files=[(filename, c_code)])
-    if len(list(transunit.diagnostics)) > 0:
-        raise CompileError('invalid C-code')
-    return compile_transunit(transunit)
+    return compile_transunit(transunit, ignore_warnings)
 
-def compile_file(c_filename):
+def compile_file(c_filename, ignore_warnings=False):
     index = clang.cindex.Index.create()
     transunit = index.parse(c_filename)
-    if len(list(transunit.diagnostics)) > 0:
-        raise CompileError('invalid C-code')
-    return compile_transunit(transunit)
+    return compile_transunit(transunit, ignore_warnings)
 
 config_clang()

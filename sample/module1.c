@@ -1,8 +1,10 @@
 int a, b = 10, c;
 
+void set_a_to(int new_value);
+
 void demo_func()
 {
-	a = 3;
+	set_a_to(3);
 	if (a)
 	{
 		int local_var = 10;
@@ -14,4 +16,10 @@ void demo_func()
 	}
 	else
 		c = 3;
+}
+
+void set_a_to(int new_value)
+{
+	a = new_value;
+	return;
 }

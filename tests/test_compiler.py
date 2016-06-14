@@ -4,8 +4,9 @@ from cymu import compiler
 from cymu.datamodel import CProgram, StructCType, IntCObj
 
 
-def compile_ccode(c_src):
-    compiled_transunit_cls = compiler.compile_str(c_src, 'test.c')
+def compile_ccode(c_src, ignore_warnings=False):
+    compiled_transunit_cls = compiler.compile_str(c_src, 'test.c',
+                                                  ignore_warnings)
     return compiled_transunit_cls()
 
 def run_ccode(c_src, **vars):
@@ -261,15 +262,34 @@ def test_returnStmt_withExpr_returnsExprAsResult():
     assert prog.f().ctype == prog.int
     assert prog.f() == 3
 
-def test_returnStmt_withNonIntFunc_returnsNonCIntAsResult():
+def test_returnStmt_withCharFunc_returnsCCharAsResult():
     prog = compile_ccode('char f() { return 9; }')
     assert prog.f().ctype == prog.char
     assert prog.f() == 9
+
+def test_returnStmt_onVoidFuncAndNoReturnStmt_returnsNone():
+    prog = compile_ccode('void func() { }')
+    assert prog.func() is None
+
+def test_returnStmt_onVoidFuncAndReturnStmtWithoutParam_returnsNone():
+    prog = compile_ccode('void func() { return; }')
+    assert prog.func() is None
 
 def test_returnStmt_withDifferentTypeThanFunc_castsToCorrectType():
     prog = compile_ccode('int f() { char x = 3; return x; }')
     assert prog.f().ctype == prog.int
     assert prog.f() == 3
+
+def test_returnStmt_prematureReturn_skipsFollowingCommands():
+    prog = compile_ccode(
+        'int inp = 1, outp = 1;'
+        'void func() { if (inp) return; outp = 2; return; }')
+    prog.func()
+    assert prog.outp == 1
+
+def test_returnStmt_onExpectReturnValueButNoReturnStmt_returnsUninitializedObj():
+    prog = compile_ccode('int func() { }', ignore_warnings=True)
+    assert not prog.func().initialized
 
 def test_callFunc_isCalled():
     sub_func_passed = []
