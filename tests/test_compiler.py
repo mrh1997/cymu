@@ -271,6 +271,37 @@ def test_returnStmt_withDifferentTypeThanFunc_castsToCorrectType():
     assert prog.f().ctype == prog.int
     assert prog.f() == 3
 
+def test_callFunc_isCalled():
+    sub_func_passed = []
+    def sub_func():
+        sub_func_passed.append(True)
+    prog = compile_ccode('void sub_func(); void func() { sub_func(); }')
+    prog.sub_func = sub_func
+    prog.func()
+    assert sub_func_passed
+
+def test_callFunc_onParamProvided_passesParam():
+    def sub_func(p1, p2):
+        assert p1.ctype == p2.ctype == prog.int
+        assert p1 == 12
+        assert p2 == 34
+    prog = compile_ccode(
+        'void sub_func(int p1, int p2);\n'
+        'void func() { sub_func(12, 34); }\n')
+    prog.sub_func = sub_func
+    prog.func()
+
+def test_callFunc_onValueReturned_processesValue():
+    def sub_func():
+        return prog.int(111)
+    prog = compile_ccode(
+        'int outp;\n'
+        'int sub_func();\n'
+        'void func() { outp = sub_func(); }\n')
+    prog.sub_func = sub_func
+    prog.func()
+    assert prog.outp == 111
+
 def test_structDef_returnCStructObj():
     prog = compile_ccode('struct s { };')
     struct_s = prog.struct_s

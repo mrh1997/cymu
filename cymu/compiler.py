@@ -137,6 +137,11 @@ def astconv_expr(expr_astc, ctx, prefix_stmts):
                 elts=[astconv_expr(child, ctx, prefix_stmts)
                       for child in children],
                 ctx=ast.Load())
+    elif expr_astc.kind.name == 'CALL_EXPR':
+        ctx.enforce_expr_exec = True
+        return call(astconv_expr(children[0], ctx, prefix_stmts),
+                    *[astconv_expr(c, ctx, prefix_stmts)
+                      for c in children[1:]])
     else:
         raise CompileError('Unsupportet Expression {!r}'
                             .format(expr_astc.kind.name))
@@ -235,8 +240,12 @@ def astconv_return_stmt(return_stmt_astc, ctx, prefix_stmts):
 
 @with_src_location()
 def astconv_expr_as_stmt(stmt_astc, ctx, prefix_stmts):
-    astconv_expr(stmt_astc, ctx, prefix_stmts)
-    return ast.Pass()
+    ctx.enforce_expr_exec = False
+    expr_astpy = astconv_expr(stmt_astc, ctx, prefix_stmts)
+    if ctx.enforce_expr_exec:
+        return ast.Expr(expr_astpy)
+    else:
+        return ast.Pass()
 
 def astconv_stmt(stmt_astc, ctx, prefix_stmts):
     if stmt_astc.kind.name == 'IF_STMT':
