@@ -8,10 +8,12 @@ class MyCType(CType):
     
     class COBJ_TYPE(CObj):
         def __init__(self, ctype, adr_space, *args, **argv):
-            cobj = super(MyCType.COBJ_TYPE, self).__init__(
-                ctype, adr_space)
+            cobj = super(MyCType.COBJ_TYPE, self).__init__(ctype, adr_space)
             self.args = args
             self.argv = argv
+
+    def __str__(self):
+        return 'my'
 
 
 @pytest.fixture
@@ -21,7 +23,7 @@ def adr_space():
 
 @pytest.fixture
 def my_ctype():
-    return MyCType('my')
+    return MyCType()
 
 
 @pytest.fixture()
@@ -65,8 +67,12 @@ class TestBoundCType(object):
         assert not bound_ctype1 != bound_ctype2
 
     def test_eqNe_withBoundCTypeOfSameAdrSpaceAndDifferentCType_returnsFalse(self, adr_space, my_ctype):
+        class OtherCType(MyCType):
+            class COBJ_TYPE(CObj):
+                def __init__(self, ctype, adr_space):
+                    super(OtherCType.COBJ_TYPE, self).__init__(ctype, adr_space)
         bound_ctype1 = BoundCType(my_ctype, adr_space)
-        bound_ctype2 = BoundCType(MyCType('alternative'), adr_space)
+        bound_ctype2 = BoundCType(OtherCType(), adr_space)
         assert bound_ctype1 != bound_ctype2
         assert not bound_ctype1 == bound_ctype2
 
@@ -82,6 +88,9 @@ class TestBoundCType(object):
         assert not bound_ctype != my_ctype
         assert not my_ctype != bound_ctype
 
+    def test_str_returnStrOfCType(self, my_ctype):
+        return str(my_ctype) == 'my'
+
 
 class TestCType(object):
 
@@ -94,22 +103,17 @@ class TestCType(object):
     def test_repr(self, my_ctype):
         assert repr(my_ctype) == "<CType 'my'>"
 
-    def test_eqNe_onSameCObjTypeAndSameName_isTrue(self, my_ctype):
-        assert my_ctype == MyCType('my')
-        assert not my_ctype != MyCType('my')
-
-    def test_eqNe_onSameCObjTypeAndDifferentName_isFalse(self, my_ctype):
-        assert my_ctype != MyCType('othername')
-        assert not my_ctype == MyCType('othernamey')
+    def test_eqNe_onSameCObjType_isTrue(self, my_ctype):
+        assert my_ctype == MyCType()
+        assert not my_ctype != MyCType()
 
     def test_eqNe_onDifferentCObjTypeAndSameName_isFalse(self, my_ctype):
         class OtherCType(CType):
             class COBJ_TYPE(CObj):
                 def __init__(self, ctype, adr_space):
-                    super(OtherCType.COBJ_TYPE, self).__init__(
-                        ctype, adr_space)
-        assert my_ctype != OtherCType('my')
-        assert not my_ctype == OtherCType('my')
+                    super(OtherCType.COBJ_TYPE, self).__init__(ctype, adr_space)
+        assert my_ctype != OtherCType()
+        assert not my_ctype == OtherCType()
 
 
 class TestIntCObj(object):
@@ -372,6 +376,13 @@ class TestIntCType(object):
         assert zero_cobj.ctype == CProgram.int
         assert zero_cobj.val == 0
 
+    def test_str_returnsCName(self):
+        assert str(CProgram.unsigned_int) == 'unsigned int'
+
+    def test_eqNe_onSameCObjTypeAndDifferentName_isFalse(self, adr_space):
+        assert CProgram.int != CProgram.char
+        assert not CProgram.int == CProgram.char
+
 
 @pytest.fixture
 def struct_simple():
@@ -537,6 +548,20 @@ class TestStructCType(object):
         zero_cobj = struct_simple.create_zero_cobj()
         assert zero_cobj.ctype == struct_simple
         assert zero_cobj.val == dict(a=0, b=0)
+
+    def test_eqNe_onSameFieldsAndDifferentName_isFalse(self, struct_simple):
+        struct_diffname = StructCType('struct_diffname', struct_simple.fields)
+        assert struct_simple != struct_diffname
+        assert not struct_simple == struct_diffname
+
+    def test_eqNe_onDifferentFieldsAndSameName_isFalse(self, struct_simple):
+        struct_difffields = StructCType(struct_simple.struct_name,
+                                        [('a', CProgram.int)])
+        assert struct_simple != struct_difffields
+        assert not struct_simple == struct_difffields
+
+    def test_str_returnsCName(self, struct_simple):
+        assert str(struct_simple) == 'struct struct_simple'
 
 
 class TestCProgram(object):

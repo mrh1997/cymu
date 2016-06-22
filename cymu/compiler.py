@@ -345,7 +345,7 @@ def astconv_struct_decl(struct_decl_astc, ctx, prefix_stmts):
     return ast.Assign(
         targets=[ast.Name(id=struct_name, ctx=ast.Store())],
         value=call(attr('datamodel', 'StructCType'),
-                   ast.Str(s=struct_name),
+                   ast.Str(s=struct_decl_astc.spelling),
                    ast.List(elts=field_astpy_list, ctx=ast.Load())))
 
 def astconv_decl(decl_astc, ctx, prefix_stmts):

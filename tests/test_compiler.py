@@ -326,11 +326,11 @@ def test_structDef_returnCStructObj():
     prog = compile_ccode('struct s { };')
     struct_s = prog.struct_s
     assert isinstance(struct_s.base_ctype, StructCType)
-    assert struct_s.name == 'struct_s'
+    assert str(struct_s) == 'struct s'
 
 def test_structDef_onDifferentTypeName():
     prog = compile_ccode('struct other_name { };')
-    assert prog.struct_other_name.name == 'struct_other_name'
+    assert str(prog.struct_other_name) == 'struct other_name'
 
 def test_structDef_withFields_setsFieldDefInPyClass():
     prog = compile_ccode("""

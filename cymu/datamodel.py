@@ -48,23 +48,22 @@ class BoundCType(object):
         if isinstance(other, CType):
             return self.base_ctype == other
         elif isinstance(other, BoundCType):
-            if self.base_ctype != other.base_ctype: return False
-            if self.adr_space != other.adr_space: return False
-            return True
+            return (self.base_ctype == other.base_ctype  and
+                    self.adr_space == other.adr_space)
         else:
-            return False
+            return NotImplemented
 
     def __ne__(self, other):
         return not self == other
+
+    def __str__(self):
+        return str(self.base_ctype)
+
 
 
 class CType(object):
 
     COBJ_TYPE = None
-
-    def __init__(self, name):
-        super(CType, self).__init__()
-        self.name = name
 
     def bind(self, adr_space):
         return BoundCType(self, adr_space)
@@ -79,7 +78,7 @@ class CType(object):
             return BoundCType(self, instance.__adr_space__)
 
     def __repr__(self):
-        return '<CType {!r}>'.format(self.name)
+        return "<CType '{}'>".format(self)
 
     def cast(self, cobj, adr_space=None):
         raise NotImplementedError()
@@ -88,14 +87,16 @@ class CType(object):
         raise NotImplementedError()
 
     def __eq__(self, other):
-        if isinstance(other, BoundCType): return other == self
-        elif not isinstance(other, CType): return False
-        elif self.COBJ_TYPE is not other.COBJ_TYPE: return False
-        elif self.name != other.name: return False
-        else: return True
+        if isinstance(other, CType):
+            return self.COBJ_TYPE is other.COBJ_TYPE
+        else:
+            return NotImplemented
 
     def __ne__(self, other):
         return not self == other
+
+    def __str__(self):
+        return str(self.base_ctype)
 
 
 class IntCObj(CObj):
@@ -187,10 +188,11 @@ class IntCType(CType):
     COBJ_TYPE = IntCObj
 
     def __init__(self, name, bits, signed):
-        super(IntCType, self).__init__(name)
+        super(IntCType, self).__init__()
         self.bits = bits
         self.signed = signed
         self.implicit_cast = None
+        self.name = name
 
     def min(self):
         if self.signed:
@@ -231,6 +233,15 @@ class IntCType(CType):
     def create_zero_cobj(self, adr_space=None):
         return self(adr_space, 0)
 
+    def __eq__(self, other):
+        equality = super(IntCType, self).__eq__(other)
+        if equality != True:
+            return equality
+        return self.name == other.name
+
+    def __str__(self):
+        return self.name
+
 
 class StructCObj(CObj, collections.Sequence):
 
@@ -251,11 +262,13 @@ class StructCObj(CObj, collections.Sequence):
 
     def __repr__(self):
         if self.initialized:
-            return '{}({})'.format(self.ctype.name, ', '.join(
-                nm+'='+repr(getattr(self, nm) if isinstance(getattr(self, nm), StructCObj) else getattr(self, nm).val)
+            return '{}({})'.format(self.ctype.struct_name, ', '.join(
+                nm+'='+repr(getattr(self, nm)
+                            if isinstance(getattr(self, nm), StructCObj)
+                            else getattr(self, nm).val)
                 for nm, ctype in self.ctype.fields))
         else:
-            return '{}()'.format(self.ctype.name)
+            return '{}()'.format(self.ctype.struct_name)
 
     @property
     def initialized(self):
@@ -316,14 +329,25 @@ class StructCType(CType):
 
     COBJ_TYPE = StructCObj
 
-    def __init__(self, name, fields):
-        super(StructCType, self).__init__(name)
+    def __init__(self, struct_name, fields):
+        super(StructCType, self).__init__()
         self.fields = fields
+        self.struct_name = struct_name
 
     def create_zero_cobj(self, adr_space=None):
         init_vals = {fname: ftype.create_zero_cobj(adr_space)
                      for fname, ftype in self.fields}
         return self(adr_space, **init_vals)
+
+    def __str__(self):
+        return 'struct ' + self.struct_name
+
+    def __eq__(self, other):
+        equality = super(StructCType, self).__eq__(other)
+        if equality != True:
+            return equality
+        return (self.struct_name == other.struct_name  and
+                self.fields == other.fields)
 
 
 class CProgram(object):
@@ -339,13 +363,13 @@ class CProgram(object):
     def __repr__(self):
         return "<CProgram>"
 
-    unsigned_long = IntCType('unsigned_long', bits=32, signed=False)
+    unsigned_long = IntCType('unsigned long', bits=32, signed=False)
     long = IntCType('long', bits=32, signed=True)
-    unsigned_int = IntCType('unsigned_int', bits=32, signed=False)
+    unsigned_int = IntCType('unsigned int', bits=32, signed=False)
     int = IntCType('int', bits=32, signed=True)
-    unsigned_short = IntCType('unsigned_short', bits=16, signed=False)
+    unsigned_short = IntCType('unsigned short', bits=16, signed=False)
     short = IntCType('short', bits=16, signed=True)
-    unsigned_char = IntCType('unsigned_char', bits=8, signed=False)
+    unsigned_char = IntCType('unsigned char', bits=8, signed=False)
     char = IntCType('char', bits=8, signed=True)
     
     long.implicit_cast = unsigned_long.implicit_cast = \
