@@ -7,23 +7,37 @@ from cymu.datamodel import CProgram, BoundCType, AddressSpace, VarAccessError, \
 class MyCType(CType):
     
     class COBJ_TYPE(CObj):
+
         def __init__(self, ctype, adr_space, *args, **argv):
             cobj = super(MyCType.COBJ_TYPE, self).__init__(ctype, adr_space)
             self.args = args
             self.argv = argv
 
+        def __int__(self):
+            return int(self.args[0])
+
     def __str__(self):
         return 'my'
+
+
+class OtherCType(CType):
+
+    class COBJ_TYPE(CObj):
+        def __init__(self, ctype, adr_space, param):
+            super(OtherCType.COBJ_TYPE, self).__init__(ctype, adr_space)
+            self.param = param
+
+    def __str__(self):
+        return 'other'
+
+
+my_ctype = MyCType()
+other_ctype = OtherCType()
 
 
 @pytest.fixture
 def adr_space():
     return AddressSpace()
-
-
-@pytest.fixture
-def my_ctype():
-    return MyCType()
 
 
 @pytest.fixture()
@@ -34,7 +48,7 @@ def bound_int(adr_space):
 class TestBoundCType(object):
 
     @pytest.fixture
-    def bound_ctype(self, adr_space, my_ctype):
+    def bound_ctype(self, adr_space):
         return BoundCType(my_ctype, adr_space)
 
     def test_call_returnsCObj(self, bound_ctype):
@@ -60,60 +74,82 @@ class TestBoundCType(object):
         assert bound_ctype.cast.__func__ is \
                bound_ctype.base_ctype.cast.__func__
 
-    def test_eqNe_withBoundCTypeOfSameAdrSpaceAndCType_returnTrue(self, adr_space, my_ctype):
+    def test_eqNe_withBoundCTypeOfSameAdrSpaceAndCType_returnTrue(self, adr_space):
         bound_ctype1 = BoundCType(my_ctype, adr_space)
         bound_ctype2 = BoundCType(my_ctype, adr_space)
         assert bound_ctype1 == bound_ctype2
         assert not bound_ctype1 != bound_ctype2
 
-    def test_eqNe_withBoundCTypeOfSameAdrSpaceAndDifferentCType_returnsFalse(self, adr_space, my_ctype):
-        class OtherCType(MyCType):
-            class COBJ_TYPE(CObj):
-                def __init__(self, ctype, adr_space):
-                    super(OtherCType.COBJ_TYPE, self).__init__(ctype, adr_space)
+    def test_eqNe_withBoundCTypeOfSameAdrSpaceAndDifferentCType_returnsFalse(self, adr_space):
         bound_ctype1 = BoundCType(my_ctype, adr_space)
         bound_ctype2 = BoundCType(OtherCType(), adr_space)
         assert bound_ctype1 != bound_ctype2
         assert not bound_ctype1 == bound_ctype2
 
-    def test_eqNe_withBoundCTypeOfDifferentAdrSpaceAndSameCType_returnsFalse(self, adr_space, my_ctype):
+    def test_eqNe_withBoundCTypeOfDifferentAdrSpaceAndSameCType_returnsFalse(self, adr_space):
         bound_ctype1 = BoundCType(my_ctype, adr_space)
         bound_ctype2 = BoundCType(my_ctype, AddressSpace())
         assert bound_ctype1 != bound_ctype2
         assert not bound_ctype1 == bound_ctype2
 
-    def test_eqNe_withCType_returnsTrue(self, adr_space, my_ctype, bound_ctype):
+    def test_eqNe_withCType_returnsTrue(self, adr_space, bound_ctype):
         assert bound_ctype == my_ctype
         assert my_ctype == bound_ctype
         assert not bound_ctype != my_ctype
         assert not my_ctype != bound_ctype
 
-    def test_str_returnStrOfCType(self, my_ctype):
+    def test_str_returnStrOfCType(self):
         return str(my_ctype) == 'my'
 
 
 class TestCType(object):
 
-    def test_bind_returnsBoundCType(self, adr_space, my_ctype):
+    def test_bind_returnsBoundCType(self, adr_space):
         bound_ctype = my_ctype.bind(adr_space)
         assert isinstance(bound_ctype, BoundCType)
         assert bound_ctype.adr_space is adr_space
         assert bound_ctype.base_ctype is my_ctype
 
-    def test_repr(self, my_ctype):
+    def test_repr(self):
         assert repr(my_ctype) == "<CType 'my'>"
 
-    def test_eqNe_onSameCObjType_isTrue(self, my_ctype):
+    def test_eqNe_onSameCObjType_isTrue(self):
         assert my_ctype == MyCType()
         assert not my_ctype != MyCType()
 
-    def test_eqNe_onDifferentCObjTypeAndSameName_isFalse(self, my_ctype):
-        class OtherCType(CType):
-            class COBJ_TYPE(CObj):
-                def __init__(self, ctype, adr_space):
-                    super(OtherCType.COBJ_TYPE, self).__init__(ctype, adr_space)
+    def test_eqNe_onDifferentCObjTypeAndSameName_isFalse(self):
         assert my_ctype != OtherCType()
         assert not my_ctype == OtherCType()
+
+    def test_cast_onPyObj_createdCObjWithPyTypeCastedToInt(self, adr_space):
+        casted_cobj = my_ctype.cast("123", adr_space)
+        assert isinstance(casted_cobj, MyCType.COBJ_TYPE)
+        assert casted_cobj.adr_space is adr_space
+        assert casted_cobj.ctype == my_ctype
+        assert casted_cobj.args == (123,)
+
+    def test_cast_onPyObjWithoutAdrSpace_raisesValueError(self, adr_space):
+        with pytest.raises(ValueError):
+            my_ctype.cast("123")
+
+    def test_cast_onCObjOfIdentcalType_returnsPassedCObj(self, adr_space):
+        cobj = my_ctype("123", adr_space)
+        casted_cobj = MyCType().cast(cobj)
+        assert cobj is casted_cobj
+
+    def test_cast_onDifferentType_createsNewCObj(self, adr_space):
+        cobj = my_ctype(adr_space, 123)
+        casted_cobj = OtherCType().cast(cobj)
+        assert isinstance(casted_cobj, OtherCType.COBJ_TYPE)
+        assert casted_cobj.ctype == OtherCType()
+        assert casted_cobj.adr_space is adr_space
+        assert casted_cobj.param == 123
+
+    def test_cast_onDifferentAdrSpacePassed_createsNewCObjWithPassedAdrSpace(self, adr_space):
+        cobj = my_ctype(AddressSpace(), "123")
+        casted_cobj = my_ctype.cast(cobj, adr_space)
+        assert casted_cobj is not cobj
+        assert casted_cobj.adr_space is adr_space
 
 
 class TestIntCObj(object):
@@ -210,32 +246,6 @@ class TestIntCObj(object):
 
     def test_initialized_onUninitializedCObj_returnsFalse(self, bound_int):
         assert not bound_int().initialized
-
-    def test_cast_onPyInt_returnsIntCObj(self, adr_space):
-        cobj = CProgram.short.cast(123, adr_space)
-        assert isinstance(cobj, IntCObj)
-        assert cobj.ctype == CProgram.short
-        assert int(cobj) == 123
-
-    def test_cast_onCObj_returnsIntCObj(self, bound_int):
-        cobj = CProgram.short.cast(bound_int(123), adr_space)
-        assert isinstance(cobj, IntCObj)
-        assert cobj.ctype == CProgram.short
-        assert int(cobj) == 123
-
-    def test_cast_onCObjWithoutAdrSpaceParam_takesAdrSpaceFromCObj(self, bound_int, adr_space):
-        cobj = CProgram.short.cast(bound_int(1))
-        assert cobj.adr_space is adr_space
-
-    def test_cast_onCObjWithDifferentAdrSpaceParam_createsNewObjWithNewAdrSpace(self, bound_int, adr_space):
-        new_adr_space = AddressSpace()
-        cobj = CProgram.int.cast(bound_int(1), adr_space=new_adr_space)
-        assert cobj.adr_space is new_adr_space
-
-    def test_cast_onCObjWithSameType_doesNotCreateNewObj(self, bound_int):
-        cobj = bound_int(1)
-        new_cobj = CProgram.int.cast(cobj)
-        assert cobj is new_cobj
 
     def test_repr(self, bound_int):
         cobj = bound_int()
@@ -369,7 +379,8 @@ class TestIntCType(object):
             CProgram.unsigned_int(adr_space, 3) ]
 
     def test_implicitCast_onPyInt_returnsSignedCObj(self, implicit_cast, adr_space):
-        assert implicit_cast(1) == [CProgram.unsigned_int(adr_space, 1)]
+        assert implicit_cast(1, adr_space=adr_space) == \
+               [CProgram.unsigned_int(adr_space, 1)]
 
     def test_createZeroCObj_returnIntWithValIs0(self, adr_space):
         zero_cobj = CProgram.int.create_zero_cobj()
@@ -549,16 +560,17 @@ class TestStructCType(object):
         assert zero_cobj.ctype == struct_simple
         assert zero_cobj.val == dict(a=0, b=0)
 
+    def test_eqNe_onMatch_isTrue(self, struct_simple):
+        assert struct_simple == \
+               StructCType(struct_simple.struct_name, struct_simple.fields)
+
     def test_eqNe_onSameFieldsAndDifferentName_isFalse(self, struct_simple):
-        struct_diffname = StructCType('struct_diffname', struct_simple.fields)
-        assert struct_simple != struct_diffname
-        assert not struct_simple == struct_diffname
+        assert struct_simple != \
+               StructCType('struct_diffname', struct_simple.fields)
 
     def test_eqNe_onDifferentFieldsAndSameName_isFalse(self, struct_simple):
-        struct_difffields = StructCType(struct_simple.struct_name,
-                                        [('a', CProgram.int)])
-        assert struct_simple != struct_difffields
-        assert not struct_simple == struct_difffields
+        assert struct_simple != \
+               StructCType(struct_simple.struct_name, [('a', CProgram.int)])
 
     def test_str_returnsCName(self, struct_simple):
         assert str(struct_simple) == 'struct struct_simple'

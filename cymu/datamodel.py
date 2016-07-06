@@ -81,7 +81,21 @@ class CType(object):
         return "<CType '{}'>".format(self)
 
     def cast(self, cobj, adr_space=None):
-        raise NotImplementedError()
+        """
+        :type cobj: any
+        :type adr_space: AddressSpace
+        :rtype: any
+        """
+        if isinstance(cobj, CObj):
+            if adr_space is None:
+                adr_space = cobj.adr_space
+            if cobj.ctype == self and cobj.adr_space == adr_space:
+                return cobj
+        else:
+            if adr_space is None:
+                raise ValueError("adr_space parameter is required, if cobj "
+                                 "is not of type '{}'".format(self))
+        return self(adr_space, int(cobj))
 
     def create_zero_cobj(self, adr_space=None):
         raise NotImplementedError()
@@ -94,9 +108,6 @@ class CType(object):
 
     def __ne__(self, other):
         return not self == other
-
-    def __str__(self):
-        return str(self.base_ctype)
 
 
 class IntCObj(CObj):
@@ -206,25 +217,15 @@ class IntCType(CType):
         else:
             return (1 << self.bits) - 1
 
-    def cast(self, cobj, adr_space=None):
-        if isinstance(cobj, IntCObj):
-            if adr_space is None:
-                adr_space = cobj.adr_space
-            if cobj.ctype == self and cobj.adr_space == adr_space:
-                return cobj
-        return self(adr_space, int(cobj))
-
     @staticmethod
     def create_implicit_caster(int_ctype, uint_ctype, *other_ctypes):
-        def implicit_cast(*cobjs):
+        def implicit_cast(*cobjs, **argv):
             signed = True
-            adr_space = None
+            adr_space = argv.pop('adr_space', None)
             for cobj in cobjs:
                 if isinstance(cobj, IntCObj):
                     signed &= cobj.ctype.signed
-                    if adr_space is not None:
-                        assert adr_space is cobj.adr_space
-                    else:
+                    if adr_space is None:
                         adr_space = cobj.adr_space
             result_ctype = int_ctype if signed else uint_ctype
             return [result_ctype.cast(cobj, adr_space) for cobj in cobjs]
@@ -377,6 +378,6 @@ class CProgram(object):
     short.implicit_cast = unsigned_short.implicit_cast = \
     char.implicit_cast = unsigned_char.implicit_cast = \
         IntCType.create_implicit_caster(int, unsigned_int,
-                                     long, unsigned_long,
-                                     short, unsigned_short,
-                                     char, unsigned_char)
+                                        long, unsigned_long,
+                                        short, unsigned_short,
+                                        char, unsigned_char)
