@@ -26,7 +26,9 @@ class CObj(object):
     def initialized(self):
         return False
 
-    val = property()
+    @property
+    def ptr(self):
+        return PtrCObj(self.ctype.ptr, self.adr_space, self)
 
 
 class BoundCType(object):
@@ -58,6 +60,14 @@ class BoundCType(object):
 
     def __str__(self):
         return str(self.base_ctype)
+
+    @property
+    def ptr(self):
+        return self.base_ctype.ptr.bind(self.adr_space)
+
+    @property
+    def ref(self):
+        return self.base_ctype.ref.bind(self.adr_space)
 
 
 
@@ -109,6 +119,10 @@ class CType(object):
     def __ne__(self, other):
         return not self == other
 
+    @property
+    def ptr(self):
+        return PtrCType(self)
+
 
 class IntCObj(CObj):
 
@@ -152,7 +166,7 @@ class IntCObj(CObj):
         else:
             py_obj &= ((1 << ctype.bits) - 1)
 
-        # convert back long back to int if possible
+        # convert long back to int if possible
         py_obj_as_int = int(py_obj)
         if py_obj_as_int == py_obj:
             py_obj = py_obj_as_int
@@ -349,6 +363,57 @@ class StructCType(CType):
             return equality
         return (self.struct_name == other.struct_name  and
                 self.fields == other.fields)
+
+
+class PtrCObj(CObj):
+
+    def __init__(self, ctype, adr_space, init_ref=None):
+        super(PtrCObj, self).__init__(ctype, adr_space)
+        self.__ref = None
+        if init_ref is not None:
+            self.ref = init_ref
+
+    @property
+    def initialized(self):
+        return self.__ref is not None
+
+    def get_ref(self):
+        if self.initialized:
+            return self.__ref
+        else:
+            raise VarAccessError('pointer is not initialized')
+
+    def set_ref(self, new_ref):
+        if not isinstance(new_ref, CObj):
+            raise ValueError('cannot assign non-CObject to {!r}.ref'
+                             .format(self))
+        elif new_ref.ctype != self.ctype.ref:
+            raise ValueError('{!r} has to match {!r}.ref'
+                             .format(new_ref.ctype, self.ctype))
+        elif new_ref.adr_space != self.adr_space:
+            raise ValueError('Addressspace of pointer has to match .ref')
+        else:
+            self.__ref = new_ref
+
+    ref = property(get_ref, set_ref)
+
+
+class PtrCType(CType):
+
+    COBJ_TYPE = PtrCObj
+
+    def __init__(self, ref):
+        super(PtrCType, self).__init__()
+        self.ref = ref
+
+    def __str__(self):
+        return str(self.ref) + ' *'
+
+    def __eq__(self, other):
+        equality = super(PtrCType, self).__eq__(other)
+        if equality != True:
+            return equality
+        return self.ref == other.ref
 
 
 class CProgram(object):

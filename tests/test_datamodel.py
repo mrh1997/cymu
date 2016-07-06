@@ -1,7 +1,7 @@
 import pytest
 
 from cymu.datamodel import CProgram, BoundCType, AddressSpace, VarAccessError, \
-    CType, IntCObj, IntCType, StructCType, CObj
+    CType, IntCObj, IntCType, StructCType, PtrCType, CObj, PtrCObj
 
 
 class MyCType(CType):
@@ -170,14 +170,14 @@ class TestIntCObj(object):
         cobj = bound_int()
         assert not cobj.initialized
 
-    def test_init_withParam_setsC(self, adr_space):
-        calls_to_setc = []
+    def test_init_withParam_setsVal(self, adr_space):
+        calls_to_setval = []
         class MyIntCObj(IntCObj):
-            def setc(self, new_value):
-                calls_to_setc.append(new_value)
-            val = property(fset=setc)
+            def _setval(self, new_value):
+                calls_to_setval.append(new_value)
+            val = property(fset=_setval)
         MyIntCObj(CProgram.int, adr_space, 3)
-        assert calls_to_setc == [3]
+        assert calls_to_setval == [3]
 
     def test_init_withIntCObj_ok(self, bound_int):
         cobj = bound_int(bound_int(11))
@@ -574,6 +574,92 @@ class TestStructCType(object):
 
     def test_str_returnsCName(self, struct_simple):
         assert str(struct_simple) == 'struct struct_simple'
+
+
+class TestPtrCType(object):
+
+    def test_str_returnsCConvention(self):
+        ptr_ctype = PtrCType(CProgram.int)
+        assert str(ptr_ctype) == 'int *'
+
+    def test_ref_returnsRefCType(self):
+        assert PtrCType(CProgram.int).ref == CProgram.int
+
+    def test_ref_onBoundCType_returnsBoundRef(self, adr_space):
+        bound_ptr = BoundCType(PtrCType(CProgram.int), adr_space)
+        assert isinstance(bound_ptr.ref, BoundCType)
+
+    def test_ref_onBoundCTypeOfNonPtrCType_raisesAttributeError(self):
+        bound_ptr = BoundCType(CProgram.int, adr_space)
+        with pytest.raises(AttributeError):
+            _ = bound_ptr.ref
+
+    def test_eqNe_onSameType_returnsTrue(self):
+        assert PtrCType(CProgram.int) == PtrCType(CProgram.int)
+
+    def test_eqNe_onDifferentType_returnsFalse(self):
+        assert PtrCType(CProgram.int) != PtrCType(CProgram.unsigned_int)
+
+    def test_ptr_onCType_returnsPtrCType(self):
+        assert CProgram.int.ptr == PtrCType(CProgram.int)
+
+    def test_ptr_onBoundCType_returnsBoundPtrCType(self, bound_int, adr_space):
+        assert isinstance(bound_int.ptr, BoundCType)
+        assert bound_int.ptr.ref == bound_int
+        assert bound_int.ptr.adr_space == adr_space
+
+
+class TestPtrCObj(object):
+
+    def test_initialized_onNoInitParam_returnsFalse(self, adr_space):
+        cobj = PtrCType(CProgram.int)(adr_space)
+        assert not cobj.initialized
+
+    def test_initialized_onInitParam_returnsTrue(self, adr_space):
+        refCObj = CProgram.int(adr_space, 1)
+        cobj = PtrCType(CProgram.int)(adr_space, refCObj)
+        assert cobj.initialized
+
+    def test_initialized_onSetRef_returnsTrue(self, adr_space):
+        cobj = PtrCType(CProgram.int)(adr_space)
+        cobj.ref = CProgram.int(adr_space, 1)
+        assert cobj.initialized
+
+    def test_getRef_onNoInitParam_raisesVarAccessError(self, adr_space):
+        cobj = PtrCType(CProgram.int)(adr_space)
+        with pytest.raises(VarAccessError):
+            _ = cobj.ref
+
+    def test_getRef_onInitParam_returnsReferredCObj(self, adr_space):
+        refCObj = CProgram.int(adr_space, 1)
+        cobj = PtrCType(CProgram.int)(adr_space, refCObj)
+        assert cobj.ref is refCObj
+
+    def test_setRef_onUninitializedCObj_setsRef(self, adr_space):
+        refCObj = CProgram.int(adr_space, 1)
+        cobj = PtrCType(CProgram.int)(adr_space)
+        cobj.ref = refCObj
+        assert cobj.ref is refCObj
+
+    def test_setRef_withNonCType_returnsValueError(self, adr_space):
+        cobj = PtrCType(CProgram.int)(adr_space)
+        with pytest.raises(ValueError):
+            cobj.ref = 1
+
+    def test_setRef_withWrongCType_returnsValueError(self, adr_space):
+        cobj = PtrCType(CProgram.int)(adr_space)
+        with pytest.raises(ValueError):
+            cobj.ref = CProgram.char(adr_space, 1)
+
+    def test_setRef_withWrongAdrSpace_returnsValueError(self, adr_space):
+        cobj = PtrCType(CProgram.int)(adr_space)
+        with pytest.raises(ValueError):
+            cobj.ref = CProgram.char(AddressSpace(), 1)
+
+    def test_ptr_onCObj_returnsPtrCObj(self, adr_space, bound_int):
+        assert isinstance(bound_int().ptr, PtrCObj)
+        assert bound_int().ptr.ctype == PtrCType(CProgram.int)
+        assert bound_int().ptr.adr_space is adr_space
 
 
 class TestCProgram(object):
