@@ -1,3 +1,7 @@
+**This project is no longer maintained. It was abandoned for [headlock](https://github.com/mrh1997/headlock)**
+
+----
+
 This is a C Emulator on base of the Python VM (currently only runs on Windows)
 
 For running this project a special version of libclang.dll is needed
